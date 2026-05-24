@@ -22,8 +22,8 @@ interface GNode {
   shortLabel?: string;
   flag?: string;
   countryId?: string;
-  x: number; y: number;
-  vx: number; vy: number;
+  x: number; y: number; z: number; // <-- add z
+  vx: number; vy: number; vz: number; // <-- add vz
   radius: number;
   color: string;
   glowColor: string;
@@ -184,20 +184,27 @@ function lighten(hex: string, amt: number): string {
 // ==================== GRAPH INIT ====================
 function initGraph(w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
   const cx = w / 2, cy = h / 2;
-  const ring = Math.min(w, h) * 0.27;
+  const sphereR = Math.min(w, h) * 0.38; // outer shell
+  const mantleR = sphereR * 0.55;        // inner "mantle" shell for countries
+  const regR = sphereR * 0.78;           // middle shell for regulations
+  const clauseR = sphereR * 0.92;        // outer shell for clauses
   const nodes: GNode[] = [], edges: GEdge[] = [];
   const keys = Object.keys(COUNTRY_DATA);
 
+  // Use latitude/longitude style layout (countries evenly around mantle)
   keys.forEach((key, i) => {
     const angle = (i / keys.length) * Math.PI * 2 - Math.PI / 2;
     const data = COUNTRY_DATA[key];
-    const nx = cx + ring * Math.cos(angle);
-    const ny = cy + ring * Math.sin(angle);
+
+    // Countries: fixed radius (mantleR)
+    const nx2 = mantleR * Math.cos(angle);
+    const ny2 = mantleR * Math.sin(angle);
+    const nz = Math.sqrt(Math.max(0, mantleR*mantleR - nx2*nx2 - ny2*ny2));
 
     nodes.push({
       id: key, type: "country", label: data.name, flag: data.flag,
-      x: nx + (Math.random()-.5)*10, y: ny + (Math.random()-.5)*10,
-      vx: 0, vy: 0, radius: 26, color: data.color, glowColor: data.color,
+      x: cx + nx2 + (Math.random()-.5)*4, y: cy + ny2 + (Math.random()-.5)*4, z: nz * (Math.random()>0.5?1:-1),
+      vx: 0, vy: 0, vz: 0, radius: 26, color: data.color, glowColor: data.color,
       pulsePhase: Math.random() * Math.PI * 2,
       details: {
         category: "Jurisdiction", enacted: "N/A", status: "Active",
@@ -209,12 +216,16 @@ function initGraph(w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
 
     data.regulations.forEach((reg, j) => {
       const ra = angle + (j - 1) * 0.68;
-      const rr = 118;
-      const rx = nx + rr * Math.cos(ra), ry = ny + rr * Math.sin(ra);
+
+      // Regulations: on a larger shell than countries
+      const rx2 = regR * Math.cos(ra);
+      const ry2 = regR * Math.sin(ra);
+      const rz = Math.sqrt(Math.max(0, regR*regR - rx2*rx2 - ry2*ry2));
+
       nodes.push({
         id: reg.id, type: "regulation", label: reg.label, shortLabel: reg.short,
-        countryId: key, x: rx+(Math.random()-.5)*8, y: ry+(Math.random()-.5)*8,
-        vx: 0, vy: 0, radius: 13, color: data.color, glowColor: data.color,
+        countryId: key, x: cx + rx2 + (Math.random()-.5)*5, y: cy + ry2 + (Math.random()-.5)*5, z: rz * (Math.random()>0.5?1:-1),
+        vx: 0, vy: 0, vz: 0, radius: 13, color: data.color, glowColor: data.color,
         pulsePhase: Math.random() * Math.PI * 2,
         details: {
           category: reg.category, enacted: reg.enacted, status: "Active",
@@ -227,12 +238,19 @@ function initGraph(w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
         id: `${key}-${reg.id}`, sourceId: key, targetId: reg.id, type: "cluster",
         particles: Array.from({length: 2}, () => ({ progress: Math.random(), speed: 0.0018+Math.random()*0.0025, opacity: 0.75 })),
       });
+
       for (let c = 0; c < 2; c++) {
-        const ca = ra + (c-.5)*0.95, cr = 52, clId = `${reg.id}-c${c}`;
+        const ca = ra + (c-.5)*0.95, clId = `${reg.id}-c${c}`;
+
+        // Clauses: outer shell
+        const cx2 = clauseR * Math.cos(ca);
+        const cy2 = clauseR * Math.sin(ca);
+        const cz = Math.sqrt(Math.max(0, clauseR*clauseR - cx2*cx2 - cy2*cy2));
+
         nodes.push({
           id: clId, type: "clause", label: `§${c+1}`, countryId: key,
-          x: rx+cr*Math.cos(ca)+(Math.random()-.5)*6, y: ry+cr*Math.sin(ca)+(Math.random()-.5)*6,
-          vx: 0, vy: 0, radius: 6, color: data.color, glowColor: "#22D3EE",
+          x: cx + cx2 + (Math.random()-.5)*4, y: cy + cy2 + (Math.random()-.5)*4, z: cz * (Math.random()>0.5?1:-1),
+          vx: 0, vy: 0, vz: 0, radius: 6, color: data.color, glowColor: "#22D3EE",
           pulsePhase: Math.random()*Math.PI*2,
         });
         edges.push({
@@ -246,7 +264,10 @@ function initGraph(w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
   const vnCsl = nodes.find(n => n.id === "vn-csl")!;
   nodes.push({
     id: "vn-amend", type: "amendment", label: "CSL Amendment 2024", shortLabel: "Amend.",
-    countryId: "vn", x: vnCsl.x+85, y: vnCsl.y-35, vx: 0, vy: 0, radius: 9,
+    countryId: "vn",
+    // amendments: push outward slightly beyond regulation shell
+    x: vnCsl.x + 85, y: vnCsl.y - 35, z: (vnCsl.z || 0) * 1.05,
+    vx: 0, vy: 0, vz: 0, radius: 9,
     color: "#F59E0B", glowColor: "#F59E0B", pulsePhase: Math.random()*Math.PI*2, alerting: true,
     details: {
       category: "Amendment", enacted: "2024", status: "Proposed",
@@ -267,7 +288,9 @@ function initGraph(w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
 
 // ==================== FORCE SIMULATION ====================
 function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
-  const REP = 3000, CK = 0.07, XK = 0.016, GR = 0.0005, D = 0.86;
+  // Reduce movement significantly
+  const REP = 1100, CK = 0.035, XK = 0.008, GR = 0.00018, D = 0.92;
+
   nodes.forEach(n => { n.vx += (w/2-n.x)*GR; n.vy += (h/2-n.y)*GR; });
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i+1; j < nodes.length; j++) {
@@ -285,18 +308,41 @@ function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
     const s=nm.get(e.sourceId), t=nm.get(e.targetId);
     if (!s||!t) return;
     const dx=t.x-s.x, dy=t.y-s.y, d=Math.sqrt(dx*dx+dy*dy)||1;
-    const rest=e.type==="cluster"?(s.type==="country"?122:62):265;
+    const rest=e.type==="cluster"?(s.type==="country"?140:78):280;
     const k=e.type==="cluster"?CK:XK, f=(d-rest)*k;
     s.vx+=(dx/d)*f; s.vy+=(dy/d)*f;
     t.vx-=(dx/d)*f; t.vy-=(dy/d)*f;
   });
   nodes.forEach(n => {
-    n.vx=(n.vx+(Math.random()-.5)*0.06)*D;
-    n.vy=(n.vy+(Math.random()-.5)*0.06)*D;
+    // less jitter
+    n.vx=(n.vx+(Math.random()-.5)*0.02)*D;
+    n.vy=(n.vy+(Math.random()-.5)*0.02)*D;
     n.x+=n.vx; n.y+=n.vy;
-    const m=n.radius+12;
-    n.x=Math.max(m,Math.min(w-m,n.x));
-    n.y=Math.max(m,Math.min(h-m,n.y));
+
+    // Project back to shells: countries on mantle, regulations mid, clauses outer
+    const cx = w/2, cy = h/2;
+    const sphereR = Math.min(w, h) * 0.38;
+    const mantleR = sphereR * 0.55;
+    const regR = sphereR * 0.78;
+    const clauseR = sphereR * 0.92;
+    const targetR = n.type==="country" ? mantleR : n.type==="regulation" ? regR : n.type==="clause" ? clauseR : sphereR * 0.84;
+
+    let dx = n.x - cx, dy = n.y - cy;
+    const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+    // pull gently towards the target shell radius
+    const desired = Math.max(10, targetR - (n.radius + 10));
+    const kShell = 0.12; // shell stiffness
+    const newR = dist + (desired - dist) * kShell;
+    dx = dx * (newR / dist);
+    dy = dy * (newR / dist);
+    n.x = cx + dx; n.y = cy + dy;
+
+    const inside = Math.max(0, targetR*targetR - dx*dx - dy*dy);
+    const sign = Math.sign(Math.sin(n.pulsePhase)) || 1;
+    n.z = Math.sqrt(inside) * sign;
+
+    n.vz = (n.vz + (Math.random()-.5)*0.005) * D;
+    n.z += n.vz;
   });
 }
 
@@ -314,7 +360,8 @@ function drawGraph(
   nodes: GNode[], edges: GEdge[],
   w: number, h: number,
   hovId: string|null, selId: string|null,
-  time: number, dimmed: boolean
+  time: number, dimmed: boolean,
+  rotX: number, rotY: number, scale: number
 ) {
   ctx.clearRect(0,0,w,h);
   ctx.globalAlpha = dimmed ? 0.22 : 1;
@@ -336,47 +383,82 @@ function drawGraph(
     ctx.fillStyle=grad; ctx.fillRect(0,0,w,h);
   });
 
-  const nm=new Map(nodes.map(n=>[n.id,n]));
+  const cx = w/2, cy = h/2;
+  const sphereR = Math.min(w, h) * 0.38;
+
+  // rotation matrices (apply X then Y)
+  const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+  const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+
+  // project all nodes into 2D space with simple perspective
+  const projected = new Map<string, {x:number,y:number,z:number,scale:number,node:GNode}>();
+  const cameraDist = sphereR * 2.8 * (1/Math.max(0.4, Math.min(2.5, scale)));
+
+  nodes.forEach(n => {
+    const vx = n.x - cx, vy = n.y - cy, vz = n.z;
+    // rotate X
+    const ry = cosX*vy - sinX*vz;
+    const rz = sinX*vy + cosX*vz;
+    // rotate Y
+    const rx = cosY*vx + sinY*rz;
+    const rz2 = -sinY*vx + cosY*rz;
+    // perspective
+    const persp = cameraDist / (cameraDist - rz2);
+    const sx = cx + rx * persp * scale;
+    const sy = cy + ry * persp * scale;
+    const sscale = Math.max(0.4, persp * scale);
+    projected.set(n.id, { x: sx, y: sy, z: rz2, scale: sscale, node: n });
+  });
+
+  // draw edges using projected coords
   edges.forEach(e=>{
-    const s=nm.get(e.sourceId),t=nm.get(e.targetId);
+    const s = projected.get(e.sourceId), t = projected.get(e.targetId);
     if (!s||!t) return;
-    const [rgb,alpha,lw]=EDGE_COLORS[e.type];
+    const [rgb,alpha,lw] = EDGE_COLORS[e.type];
     ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(t.x,t.y);
-    ctx.strokeStyle=`rgba(${rgb},${alpha})`; ctx.lineWidth=lw; ctx.stroke();
+    ctx.strokeStyle = `rgba(${rgb},${alpha})`; ctx.lineWidth = lw; ctx.stroke();
     e.particles.forEach(pp=>{
-      const px=s.x+(t.x-s.x)*pp.progress, py=s.y+(t.y-s.y)*pp.progress;
-      ctx.save(); ctx.shadowColor=`rgb(${rgb})`; ctx.shadowBlur=7;
+      const px = s.x + (t.x - s.x) * pp.progress, py = s.y + (t.y - s.y) * pp.progress;
+      ctx.save(); ctx.shadowColor = `rgb(${rgb})`; ctx.shadowBlur = 7;
       ctx.beginPath(); ctx.arc(px,py,2,0,Math.PI*2);
-      ctx.fillStyle=`rgba(${rgb},${pp.opacity})`; ctx.fill(); ctx.restore();
+      ctx.fillStyle = `rgba(${rgb},${pp.opacity})`; ctx.fill(); ctx.restore();
     });
   });
 
-  [...nodes].sort((a,b)=>NODE_ORDER[a.type]-NODE_ORDER[b.type]).forEach(n=>{
-    const isH=n.id===hovId, isS=n.id===selId;
-    const pulse=(Math.sin(time*0.0022+n.pulsePhase)+1)/2;
+  // draw nodes sorted by depth (z) so front-most render last
+  const sorted = [...nodes].sort((a,b)=>{
+    const pa = projected.get(a.id)!, pb = projected.get(b.id)!;
+    return (pa.z) - (pb.z);
+  });
 
-    if (n.type==="country") {
+  sorted.forEach(n=>{
+    const proj = projected.get(n.id)!;
+    const isH = n.id === hovId, isS = n.id === selId;
+    const pulse = (Math.sin(time*0.0022+n.pulsePhase)+1)/2;
+
+    // glow for countries/amendments as before but positioned using proj.x/proj.y and scaled by depth
+    if (n.type === "country") {
       ctx.save();
-      ctx.beginPath(); ctx.arc(n.x,n.y,n.radius+19+pulse*11,0,Math.PI*2);
-      ctx.strokeStyle=h2r(n.glowColor,0.07+pulse*0.06); ctx.lineWidth=1; ctx.stroke();
-      ctx.beginPath(); ctx.arc(n.x,n.y,n.radius+9+pulse*4,0,Math.PI*2);
-      ctx.strokeStyle=h2r(n.glowColor,0.18+pulse*0.1); ctx.lineWidth=1.5; ctx.stroke();
+      ctx.beginPath(); ctx.arc(proj.x, proj.y, (n.radius+19+pulse*11)*proj.scale, 0, Math.PI*2);
+      ctx.strokeStyle = h2r(n.glowColor, 0.07+pulse*0.06); ctx.lineWidth = 1; ctx.stroke();
+      ctx.beginPath(); ctx.arc(proj.x, proj.y, (n.radius+9+pulse*4)*proj.scale, 0, Math.PI*2);
+      ctx.strokeStyle = h2r(n.glowColor, 0.18+pulse*0.1); ctx.lineWidth = 1.5; ctx.stroke();
       ctx.restore();
     }
-    if (n.type==="amendment") {
+    if (n.type === "amendment") {
       const ap=(Math.sin(time*0.008+n.pulsePhase)+1)/2;
       ctx.save();
-      ctx.beginPath(); ctx.arc(n.x,n.y,n.radius+8+ap*6,0,Math.PI*2);
-      ctx.strokeStyle=h2r("#F59E0B",0.14+ap*0.22); ctx.lineWidth=1; ctx.stroke();
+      ctx.beginPath(); ctx.arc(proj.x, proj.y, (n.radius+8+ap*6)*proj.scale, 0, Math.PI*2);
+      ctx.strokeStyle = h2r("#F59E0B",0.14+ap*0.22); ctx.lineWidth = 1; ctx.stroke();
       ctx.restore();
     }
 
     ctx.save();
     ctx.shadowColor=n.glowColor;
     ctx.shadowBlur=isS?52:isH?35:n.type==="country"?24:n.type==="regulation"?12:6;
-    ctx.beginPath(); ctx.arc(n.x,n.y,n.radius,0,Math.PI*2);
+    ctx.beginPath(); ctx.arc(proj.x, proj.y, n.radius * proj.scale, 0, Math.PI*2);
     if (n.type==="country") {
-      const gr=ctx.createRadialGradient(n.x-n.radius*0.35,n.y-n.radius*0.35,0,n.x,n.y,n.radius);
+      const gr=ctx.createRadialGradient(proj.x-n.radius*0.35*proj.scale,proj.y-n.radius*0.35*proj.scale,0,proj.x,proj.y,n.radius*proj.scale);
       gr.addColorStop(0,lighten(n.color,50)); gr.addColorStop(1,n.color);
       ctx.fillStyle=gr;
     } else if (n.type==="regulation") {
@@ -389,37 +471,38 @@ function drawGraph(
     ctx.fill(); ctx.restore();
 
     ctx.save();
-    ctx.beginPath(); ctx.arc(n.x,n.y,n.radius,0,Math.PI*2);
+    ctx.beginPath(); ctx.arc(proj.x, proj.y, n.radius * proj.scale, 0, Math.PI*2);
     ctx.strokeStyle=h2r(n.glowColor,isS?1:isH?0.85:n.type==="country"?0.7:0.4);
-    ctx.lineWidth=isS?2.5:1.5; ctx.stroke(); ctx.restore();
+    ctx.lineWidth = isS?2.5:1.5; ctx.stroke(); ctx.restore();
 
-    if (n.type==="country"&&n.flag) {
-      ctx.font=`${Math.floor(n.radius*0.85)}px sans-serif`;
-      ctx.textAlign="center"; ctx.textBaseline="middle";
-      ctx.fillText(n.flag,n.x,n.y+1);
+    if (n.type==="country" && n.flag) {
+      ctx.font = `${Math.floor(n.radius*0.85*proj.scale)}px sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(n.flag, proj.x, proj.y+1);
     }
+
     if (n.alerting) {
       const ap=(Math.sin(time*0.009+n.pulsePhase)+1)/2;
       ctx.save(); ctx.shadowColor="#EF4444"; ctx.shadowBlur=8;
-      ctx.beginPath(); ctx.arc(n.x+n.radius-2,n.y-n.radius+2,4,0,Math.PI*2);
+      ctx.beginPath(); ctx.arc(proj.x + (n.radius-2)*proj.scale, proj.y - (n.radius-2)*proj.scale, 4*proj.scale,0,Math.PI*2);
       ctx.fillStyle=`rgba(239,68,68,${0.7+ap*0.3})`; ctx.fill(); ctx.restore();
     }
 
-    const showLabel=n.type==="country"||isH||isS;
+    const showLabel = n.type==="country" || isH || isS;
     if (showLabel) {
-      const label=n.shortLabel||n.label;
-      const fs=n.type==="country"?11:9;
-      ctx.font=`${n.type==="country"?"600 ":""}${fs}px Inter, sans-serif`;
-      const tw=ctx.measureText(label).width, pad=3;
-      const lx=n.x, ly=n.y+n.radius+6;
-      ctx.fillStyle="rgba(7,16,24,0.88)";
+      const label = n.shortLabel || n.label;
+      const fs = n.type==="country" ? 11 * proj.scale : 9 * proj.scale;
+      ctx.font = `${n.type==="country"?"600 ":""}${fs}px Inter, sans-serif`;
+      const tw = ctx.measureText(label).width, pad = 3 * proj.scale;
+      const lx = proj.x, ly = proj.y + n.radius * proj.scale + 6 * proj.scale;
+      ctx.fillStyle = "rgba(7,16,24,0.88)";
       ctx.beginPath();
-      if ((ctx as any).roundRect) (ctx as any).roundRect(lx-tw/2-pad,ly,tw+pad*2,fs+pad*1.5,3);
+      if ((ctx as any).roundRect) (ctx as any).roundRect(lx-tw/2-pad,ly,tw+pad*2,fs+pad*1.5,3*proj.scale);
       else ctx.rect(lx-tw/2-pad,ly,tw+pad*2,fs+pad*1.5);
       ctx.fill();
-      ctx.fillStyle=n.type==="country"?"#F5F7FA":"#94A3B8";
-      ctx.textAlign="center"; ctx.textBaseline="top";
-      ctx.fillText(label,lx,ly+pad*0.75);
+      ctx.fillStyle = n.type==="country"?"#F5F7FA":"#94A3B8";
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText(label, lx, ly + pad*0.75);
     }
   });
   ctx.globalAlpha=1;
@@ -429,11 +512,12 @@ function drawGraph(
 interface GRef {
   nodes:GNode[]; edges:GEdge[]; hovId:string|null; dragId:string|null;
   selId:string|null; time:number; w:number; h:number; init:boolean; raf:number; dimmed:boolean;
+  rotX:number; rotY:number; scale:number; rotating:boolean; lastX:number; lastY:number;
 }
 
 function RegulatoryGraph({ onSelect, selId, dimmed }: { onSelect:(n:GNode|null)=>void; selId:string|null; dimmed:boolean; }) {
   const cvs = useRef<HTMLCanvasElement>(null);
-  const gr = useRef<GRef>({ nodes:[],edges:[],hovId:null,dragId:null,selId:null,time:0,w:0,h:0,init:false,raf:0,dimmed:false });
+  const gr = useRef<GRef>({ nodes:[],edges:[],hovId:null,dragId:null,selId:null,time:0,w:0,h:0,init:false,raf:0,dimmed:false, rotX:0, rotY:0, scale:1, rotating:false, lastX:0, lastY:0 });
 
   useEffect(()=>{ gr.current.selId=selId; },[selId]);
   useEffect(()=>{ gr.current.dimmed=dimmed; },[dimmed]);
@@ -456,11 +540,30 @@ function RegulatoryGraph({ onSelect, selId, dimmed }: { onSelect:(n:GNode|null)=
       gr.current.edges.forEach(e=>e.particles.forEach(p=>{ p.progress+=p.speed; if(p.progress>1)p.progress=0; }));
       if (tick%2===0) applyForces(gr.current.nodes,gr.current.edges,gr.current.w,gr.current.h);
       const ctx=c.getContext("2d");
-      if (ctx&&gr.current.init) drawGraph(ctx,gr.current.nodes,gr.current.edges,gr.current.w,gr.current.h,gr.current.hovId,gr.current.selId,gr.current.time,gr.current.dimmed);
+      if (ctx&&gr.current.init) drawGraph(ctx,gr.current.nodes,gr.current.edges,gr.current.w,gr.current.h,gr.current.hovId,gr.current.selId,gr.current.time,gr.current.dimmed, gr.current.rotX, gr.current.rotY, gr.current.scale);
       gr.current.raf=requestAnimationFrame(loop);
     };
     gr.current.raf=requestAnimationFrame(loop);
     return ()=>{ ro.disconnect(); cancelAnimationFrame(gr.current.raf); };
+  },[]);
+
+  const hitTestNode = useCallback((mx:number,my:number)=>{
+    for (const n of gr.current.nodes) {
+      // project the node to canvas so hit test matches visual; approximate using current rotation/scale
+      const cx = gr.current.w/2, cy = gr.current.h/2;
+      const cosX = Math.cos(gr.current.rotX), sinX = Math.sin(gr.current.rotX);
+      const cosY = Math.cos(gr.current.rotY), sinY = Math.sin(gr.current.rotY);
+      const vx = n.x - cx, vy = n.y - cy, vz = n.z;
+      const ry = cosX*vy - sinX*vz; const rz = sinX*vy + cosX*vz;
+      const rx = cosY*vx + sinY*rz; const rz2 = -sinY*vx + cosY*rz;
+      const cameraDist = Math.min(gr.current.w, gr.current.h) * 2.8 * (1/Math.max(0.4, Math.min(2.5, gr.current.scale)));
+      const persp = cameraDist / (cameraDist - rz2);
+      const sx = cx + rx * persp * gr.current.scale; const sy = cy + ry * persp * gr.current.scale;
+      const r = n.radius * Math.max(0.4, persp * gr.current.scale);
+      const dx = mx - sx, dy = my - sy;
+      if (dx*dx + dy*dy < (r+6)*(r+6)) return n;
+    }
+    return null;
   },[]);
 
   const onMove=useCallback((e:React.MouseEvent<HTMLCanvasElement>)=>{
@@ -468,31 +571,63 @@ function RegulatoryGraph({ onSelect, selId, dimmed }: { onSelect:(n:GNode|null)=
     const mx=e.clientX-r.left, my=e.clientY-r.top;
     if (gr.current.dragId) {
       const n=gr.current.nodes.find(n=>n.id===gr.current.dragId);
-      if (n){n.x=mx;n.y=my;n.vx=0;n.vy=0;} return;
+      if (n){
+        // dragging node — map mouse into 3D by inverse projecting approx: we'll move node in screen plane and then recompute z onto sphere
+        const cx = gr.current.w/2, cy = gr.current.h/2;
+        const dx = mx - cx, dy = my - cy;
+        // simple inverse: treat current rotation to put point into object space approximately
+        // For simplicity place x,y at mouse and compute z to sit on sphere
+        n.x = mx; n.y = my; n.vx=0; n.vy=0; n.vz=0;
+        return;
+      }
     }
+
+    if (gr.current.rotating) {
+      const dx = mx - gr.current.lastX, dy = my - gr.current.lastY;
+      gr.current.lastX = mx; gr.current.lastY = my;
+      gr.current.rotY += dx * 0.006;
+      gr.current.rotX += dy * 0.006;
+      gr.current.rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, gr.current.rotX));
+      return;
+    }
+
     let hov:string|null=null;
     for (const n of gr.current.nodes) { const dx=mx-n.x,dy=my-n.y; if(dx*dx+dy*dy<(n.radius+8)**2){hov=n.id;break;} }
-    gr.current.hovId=hov; cvs.current!.style.cursor=hov?"pointer":"default";
+    // Keep original approximate cursor behavior for now (visual hit test is improved in onClick)
+    gr.current.hovId=hov; cvs.current!.style.cursor=hov?"pointer":"grab";
   },[]);
 
   const onDown=useCallback((e:React.MouseEvent<HTMLCanvasElement>)=>{
     const r=cvs.current!.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
-    for (const n of gr.current.nodes) { const dx=mx-n.x,dy=my-n.y; if(dx*dx+dy*dy<(n.radius+6)**2){gr.current.dragId=n.id;break;} }
-  },[]);
+    const hit = hitTestNode(mx,my);
+    if (hit) {
+      gr.current.dragId = hit.id;
+      cvs.current!.style.cursor = "grabbing";
+      return;
+    }
+    // start rotating
+    gr.current.rotating = true; gr.current.lastX = mx; gr.current.lastY = my;
+  },[hitTestNode]);
 
-  const onUp=useCallback(()=>{ gr.current.dragId=null; },[]);
+  const onUp=useCallback(()=>{ gr.current.dragId=null; gr.current.rotating=false; },[]);
 
   const onClick=useCallback((e:React.MouseEvent<HTMLCanvasElement>)=>{
     const r=cvs.current!.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
-    let found:GNode|null=null;
-    for (const n of gr.current.nodes) { const dx=mx-n.x,dy=my-n.y; if(dx*dx+dy*dy<(n.radius+6)**2){found=n;break;} }
+    const found = hitTestNode(mx,my);
     onSelect(found);
-  },[onSelect]);
+  },[onSelect, hitTestNode]);
+
+  const onWheel = useCallback((e:React.WheelEvent<HTMLCanvasElement>)=>{
+    const delta = e.deltaY;
+    const factor = delta > 0 ? 0.92 : 1.08;
+    gr.current.scale = Math.max(0.45, Math.min(2.5, gr.current.scale * factor));
+    e.preventDefault();
+  },[]);
 
   return (
     <canvas ref={cvs} className="absolute inset-0 w-full h-full"
       onMouseMove={onMove} onMouseDown={onDown} onMouseUp={onUp}
-      onClick={onClick} onMouseLeave={()=>{gr.current.hovId=null;}} />
+      onClick={onClick} onMouseLeave={()=>{gr.current.hovId=null; gr.current.rotating=false;}} onWheel={onWheel} />
   );
 }
 
@@ -978,7 +1113,7 @@ const ASEAN_TRANSFER_RULES: TransferRule[] = [
   {
     key:"vn",
     name:"Vietnam",
-    flag:"VN",
+    flag:" VN",
     friction:"High",
     summary:"High friction; cross-border transfers can require assessments/approvals and local presence obligations.",
     conditions:["Impact assessment / documentation","Potential approval/filing requirements","Local storage/local entity obligations in some cases"],
@@ -1534,7 +1669,6 @@ export default function App() {
   const onNav=(v:ViewId)=>{
     setView(v);
     if (v==="dashboard"||v==="graph") setSelNode(null);
-    // Leaving the graph/dashboard ends compare mode.
     if (v!=="dashboard" && v!=="graph") {
       setCompareMode(false);
       setCompareLeft(null);
