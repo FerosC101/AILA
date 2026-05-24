@@ -1,4 +1,4 @@
-  # AILA---Artificial-Intelligence-for-Legal-Analysis
+  # AILA - Artificial Intelligence for Legal Analysis
   
   ## Running the code
 
