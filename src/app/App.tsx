@@ -44,38 +44,111 @@ interface GEdge { id: string; sourceId: string; targetId: string; type: EdgeType
 // ==================== DATA ====================
 const COUNTRY_DATA: Record<string, {
   name: string; flag: string; color: string;
-  regulations: Array<{ id: string; label: string; short: string; category: string; clauses: number; amendments: number; enacted: string; }>;
+  regulations: Array<{
+    id: string;
+    label: string;
+    short: string;
+    category: string;
+    clauses: number;
+    amendments: number;
+    enacted: string;
+  }>;
 }> = {
-  ph: { name: "Philippines", flag: "PH", color: "#3B82F6", regulations: [
-    { id: "ph-dpa", label: "Data Privacy Act", short: "DPA", category: "Data Protection", clauses: 48, amendments: 3, enacted: "2012" },
-    { id: "ph-eca", label: "E-Commerce Act", short: "ECA", category: "Digital Commerce", clauses: 32, amendments: 1, enacted: "2000" },
-    { id: "ph-cpa", label: "Cybercrime Prevention", short: "CPA", category: "Cybersecurity", clauses: 21, amendments: 2, enacted: "2012" },
-  ]},
-  sg: { name: "Singapore", flag: "SG", color: "#10B981", regulations: [
-    { id: "sg-pdpa", label: "Personal Data Protection Act", short: "PDPA", category: "Data Protection", clauses: 65, amendments: 5, enacted: "2012" },
-    { id: "sg-psa", label: "Payment Services Act", short: "PSA", category: "Fintech", clauses: 43, amendments: 2, enacted: "2019" },
-    { id: "sg-cma", label: "Computer Misuse Act", short: "CMA", category: "Cybersecurity", clauses: 18, amendments: 4, enacted: "1993" },
-  ]},
-  vn: { name: "Vietnam", flag: "VN", color: "#EF4444", regulations: [
-    { id: "vn-csl", label: "Cybersecurity Law", short: "CSL", category: "Cybersecurity", clauses: 43, amendments: 1, enacted: "2018" },
-    { id: "vn-dpd", label: "Decree 13 Personal Data", short: "DPD", category: "Data Protection", clauses: 38, amendments: 0, enacted: "2023" },
-    { id: "vn-ecd", label: "E-Commerce Decree", short: "ECD", category: "Digital Commerce", clauses: 54, amendments: 3, enacted: "2013" },
-  ]},
-  th: { name: "Thailand", flag: "TH", color: "#F59E0B", regulations: [
-    { id: "th-pdpa", label: "PDPA B.E. 2562", short: "PDPA", category: "Data Protection", clauses: 96, amendments: 2, enacted: "2019" },
-    { id: "th-cca", label: "Computer Crimes Act", short: "CCA", category: "Cybersecurity", clauses: 29, amendments: 3, enacted: "2007" },
-    { id: "th-eta", label: "Electronic Transactions Act", short: "ETA", category: "Digital Commerce", clauses: 41, amendments: 1, enacted: "2001" },
-  ]},
-  id: { name: "Indonesia", flag: "ID", color: "#8B5CF6", regulations: [
-    { id: "id-pdp", label: "Personal Data Protection Law", short: "PDP", category: "Data Protection", clauses: 76, amendments: 0, enacted: "2022" },
-    { id: "id-gr71", label: "GR 71/2019 E-Commerce", short: "GR71", category: "Digital Commerce", clauses: 23, amendments: 1, enacted: "2019" },
-    { id: "id-ojk", label: "OJK Fintech Regulation", short: "OJK", category: "Fintech", clauses: 34, amendments: 4, enacted: "2016" },
-  ]},
-  my: { name: "Malaysia", flag: "MY", color: "#22D3EE", regulations: [
-    { id: "my-pdpa", label: "Personal Data Protection Act", short: "PDPA", category: "Data Protection", clauses: 44, amendments: 2, enacted: "2010" },
-    { id: "my-cma", label: "Communications & Multimedia Act", short: "CMA", category: "Telecom", clauses: 212, amendments: 8, enacted: "1998" },
-    { id: "my-dst", label: "Digital Services Tax", short: "DST", category: "Digital Tax", clauses: 18, amendments: 1, enacted: "2019" },
-  ]},
+  ph: {
+    name: "Philippines",
+    flag: "PH",
+    color: "#3B82F6",
+    regulations: [
+      { id: "ph-dpa", label: "Data Privacy Act", short: "DPA", category: "Data Protection", clauses: 48, amendments: 3, enacted: "2012" },
+      { id: "ph-eca", label: "E-Commerce Act", short: "ECA", category: "Digital Commerce", clauses: 32, amendments: 1, enacted: "2000" },
+      { id: "ph-cpa", label: "Cybercrime Prevention Act", short: "CPA", category: "Cybersecurity", clauses: 21, amendments: 2, enacted: "2012" },
+
+      // NEW
+      { id: "ph-nihra", label: "National ICT Harmonization Framework", short: "NIHRA", category: "Digital Governance", clauses: 36, amendments: 1, enacted: "2015" },
+      { id: "ph-dsfa", label: "Digital Services Framework Act", short: "DSFA", category: "Digital Commerce", clauses: 27, amendments: 0, enacted: "2021" },
+      { id: "ph-pcia", label: "Philippine Cybersecurity Infrastructure Act", short: "PCIA", category: "Cybersecurity", clauses: 39, amendments: 2, enacted: "2018" },
+    ],
+  },
+
+  sg: {
+    name: "Singapore",
+    flag: "SG",
+    color: "#10B981",
+    regulations: [
+      { id: "sg-pdpa", label: "Personal Data Protection Act", short: "PDPA", category: "Data Protection", clauses: 65, amendments: 5, enacted: "2012" },
+      { id: "sg-psa", label: "Payment Services Act", short: "PSA", category: "Fintech", clauses: 43, amendments: 2, enacted: "2019" },
+      { id: "sg-cma", label: "Computer Misuse Act", short: "CMA", category: "Cybersecurity", clauses: 18, amendments: 4, enacted: "1993" },
+
+      // NEW
+      { id: "sg-osa", label: "Online Safety Act Framework", short: "OSA", category: "Digital Governance", clauses: 29, amendments: 1, enacted: "2022" },
+      { id: "sg-dga", label: "Digital Government Act", short: "DGA", category: "Digital Governance", clauses: 41, amendments: 2, enacted: "2020" },
+      { id: "sg-ai-gov", label: "Model AI Governance Framework", short: "AI-GOV", category: "AI Regulation", clauses: 22, amendments: 0, enacted: "2019" },
+    ],
+  },
+
+  vn: {
+    name: "Vietnam",
+    flag: "VN",
+    color: "#EF4444",
+    regulations: [
+      { id: "vn-csl", label: "Cybersecurity Law", short: "CSL", category: "Cybersecurity", clauses: 43, amendments: 1, enacted: "2018" },
+      { id: "vn-dpd", label: "Decree 13 Personal Data Protection", short: "DPD", category: "Data Protection", clauses: 38, amendments: 0, enacted: "2023" },
+      { id: "vn-ecd", label: "E-Commerce Decree", short: "ECD", category: "Digital Commerce", clauses: 54, amendments: 3, enacted: "2013" },
+
+      // NEW
+      { id: "vn-itl", label: "Information Technology Law", short: "ITL", category: "Digital Governance", clauses: 62, amendments: 2, enacted: "2006" },
+      { id: "vn-nd72", label: "Decree 72 Internet Management", short: "ND72", category: "Cybersecurity", clauses: 33, amendments: 4, enacted: "2013" },
+      { id: "vn-eid", label: "Electronic Identification Law", short: "EID", category: "Digital Identity", clauses: 28, amendments: 0, enacted: "2021" },
+    ],
+  },
+
+  th: {
+    name: "Thailand",
+    flag: "TH",
+    color: "#F59E0B",
+    regulations: [
+      { id: "th-pdpa", label: "PDPA B.E. 2562", short: "PDPA", category: "Data Protection", clauses: 96, amendments: 2, enacted: "2019" },
+      { id: "th-cca", label: "Computer Crimes Act", short: "CCA", category: "Cybersecurity", clauses: 29, amendments: 3, enacted: "2007" },
+      { id: "th-eta", label: "Electronic Transactions Act", short: "ETA", category: "Digital Commerce", clauses: 41, amendments: 1, enacted: "2001" },
+
+      // NEW
+      { id: "th-dpa-comm", label: "Digital Personal Data Implementation Rules", short: "DPA-IR", category: "Data Protection", clauses: 52, amendments: 1, enacted: "2021" },
+      { id: "th-cybersec", label: "Cybersecurity Act", short: "CYBA", category: "Cybersecurity", clauses: 44, amendments: 2, enacted: "2019" },
+      { id: "th-digital-econ", label: "Digital Economy Act", short: "DEA", category: "Digital Governance", clauses: 37, amendments: 1, enacted: "2017" },
+    ],
+  },
+
+  id: {
+    name: "Indonesia",
+    flag: "ID",
+    color: "#8B5CF6",
+    regulations: [
+      { id: "id-pdp", label: "Personal Data Protection Law", short: "PDP", category: "Data Protection", clauses: 76, amendments: 0, enacted: "2022" },
+      { id: "id-gr71", label: "GR 71/2019 E-Commerce Regulation", short: "GR71", category: "Digital Commerce", clauses: 23, amendments: 1, enacted: "2019" },
+      { id: "id-ojk", label: "OJK Fintech Regulation", short: "OJK", category: "Fintech", clauses: 34, amendments: 4, enacted: "2016" },
+
+      // NEW
+      { id: "id-ite", label: "Electronic Information & Transactions Law", short: "ITE", category: "Cybersecurity", clauses: 58, amendments: 3, enacted: "2008" },
+      { id: "id-pp71", label: "Government Regulation 71", short: "PP71", category: "Digital Governance", clauses: 46, amendments: 2, enacted: "2019" },
+      { id: "id-cloud", label: "Data Localization & Cloud Policy", short: "DLC", category: "Data Governance", clauses: 31, amendments: 1, enacted: "2020" },
+    ],
+  },
+
+  my: {
+    name: "Malaysia",
+    flag: "MY",
+    color: "#22D3EE",
+    regulations: [
+      { id: "my-pdpa", label: "Personal Data Protection Act", short: "PDPA", category: "Data Protection", clauses: 44, amendments: 2, enacted: "2010" },
+      { id: "my-cma", label: "Communications & Multimedia Act", short: "CMA", category: "Telecom", clauses: 212, amendments: 8, enacted: "1998" },
+      { id: "my-dst", label: "Digital Services Tax", short: "DST", category: "Digital Tax", clauses: 18, amendments: 1, enacted: "2019" },
+
+      // NEW
+      { id: "my-cybersec", label: "Cybersecurity Act Framework", short: "CYB", category: "Cybersecurity", clauses: 39, amendments: 1, enacted: "2020" },
+      { id: "my-digital-econ", label: "Malaysia Digital Economy Blueprint", short: "MDEB", category: "Digital Governance", clauses: 55, amendments: 2, enacted: "2021" },
+      { id: "my-cloud-policy", label: "Public Sector Cloud Policy", short: "PSC", category: "Data Governance", clauses: 26, amendments: 0, enacted: "2018" },
+    ],
+  },
 };
 
 const CROSS_LINKS: Array<[string, string, EdgeType]> = [
