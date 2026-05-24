@@ -79,6 +79,3 @@ Then open the Vite URL shown in the terminal.
 - This repository is intended as a **prototype UI**. The “AI”, “diff”, and “ingestion” features are currently simulated with static data.
 - The graph data is generated in-memory and is not backed by a database/API in this demo.
 
-## Attribution
-
-Original design source (Figma): https://www.figma.com/design/tlbAUnWu8VnBNdmBi63ptZ/Implement-User-Prompt
