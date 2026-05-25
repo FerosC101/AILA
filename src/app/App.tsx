@@ -22,8 +22,8 @@ interface GNode {
   shortLabel?: string;
   flag?: string;
   countryId?: string;
-  x: number; y: number;
-  vx: number; vy: number;
+  x: number; y: number; z: number;
+  vx: number; vy: number; vz: number;
   radius: number;
   color: string;
   glowColor: string;
@@ -40,6 +40,10 @@ interface GNode {
 
 interface Particle { progress: number; speed: number; opacity: number; }
 interface GEdge { id: string; sourceId: string; targetId: string; type: EdgeType; particles: Particle[]; }
+
+type LiveEvent = { type: "alert" | "diff" | "verify" | "ingest" | "analysis"; text: string; time: string };
+type DemoStep = "crawler" | "ocr" | "translation" | "versioning";
+type SimulateAction = { tick: number; step: DemoStep };
 
 // ==================== DATA ====================
 const COUNTRY_DATA: Record<string, {
@@ -160,7 +164,7 @@ const CROSS_LINKS: Array<[string, string, EdgeType]> = [
   ["ph-dpa", "my-pdpa", "amendment"],
 ];
 
-const LIVE_EVENTS = [
+const LIVE_EVENTS: LiveEvent[] = [
   { type: "alert", text: "VN Cybersecurity Law amendment detected", time: "00:12" },
   { type: "diff", text: "Semantic diff: SG PDPA §26 modified", time: "02:47" },
   { type: "verify", text: "Citation verified: PH DPA §12(a)", time: "05:31" },
@@ -183,21 +187,21 @@ function lighten(hex: string, amt: number): string {
 
 // ==================== GRAPH INIT ====================
 function initGraph(w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
-  const cx = w / 2, cy = h / 2;
-  const ring = Math.min(w, h) * 0.27;
+  const sphere = Math.min(w, h) * 0.34;
   const nodes: GNode[] = [], edges: GEdge[] = [];
   const keys = Object.keys(COUNTRY_DATA);
 
   keys.forEach((key, i) => {
     const angle = (i / keys.length) * Math.PI * 2 - Math.PI / 2;
     const data = COUNTRY_DATA[key];
-    const nx = cx + ring * Math.cos(angle);
-    const ny = cy + ring * Math.sin(angle);
+    const nx = sphere * Math.cos(angle) * 0.9;
+    const ny = sphere * Math.sin(angle * 1.3) * 0.45;
+    const nz = sphere * Math.sin(angle) * 0.82;
 
     nodes.push({
       id: key, type: "country", label: data.name, flag: data.flag,
-      x: nx + (Math.random()-.5)*10, y: ny + (Math.random()-.5)*10,
-      vx: 0, vy: 0, radius: 26, color: data.color, glowColor: data.color,
+      x: nx + (Math.random()-.5)*16, y: ny + (Math.random()-.5)*16, z: nz + (Math.random()-.5)*24,
+      vx: 0, vy: 0, vz: 0, radius: 26, color: data.color, glowColor: data.color,
       pulsePhase: Math.random() * Math.PI * 2,
       details: {
         category: "Jurisdiction", enacted: "N/A", status: "Active",
@@ -209,12 +213,15 @@ function initGraph(w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
 
     data.regulations.forEach((reg, j) => {
       const ra = angle + (j - 1) * 0.68;
-      const rr = 118;
-      const rx = nx + rr * Math.cos(ra), ry = ny + rr * Math.sin(ra);
+      const rr = 108;
+      const rx = nx + rr * Math.cos(ra);
+      const ry = ny + rr * Math.sin(ra) * 0.92;
+      const rz = nz + rr * Math.sin(ra * 0.8) * 0.7;
       nodes.push({
         id: reg.id, type: "regulation", label: reg.label, shortLabel: reg.short,
-        countryId: key, x: rx+(Math.random()-.5)*8, y: ry+(Math.random()-.5)*8,
-        vx: 0, vy: 0, radius: 13, color: data.color, glowColor: data.color,
+        countryId: key,
+        x: rx+(Math.random()-.5)*12, y: ry+(Math.random()-.5)*12, z: rz+(Math.random()-.5)*16,
+        vx: 0, vy: 0, vz: 0, radius: 13, color: data.color, glowColor: data.color,
         pulsePhase: Math.random() * Math.PI * 2,
         details: {
           category: reg.category, enacted: reg.enacted, status: "Active",
@@ -231,8 +238,10 @@ function initGraph(w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
         const ca = ra + (c-.5)*0.95, cr = 52, clId = `${reg.id}-c${c}`;
         nodes.push({
           id: clId, type: "clause", label: `§${c+1}`, countryId: key,
-          x: rx+cr*Math.cos(ca)+(Math.random()-.5)*6, y: ry+cr*Math.sin(ca)+(Math.random()-.5)*6,
-          vx: 0, vy: 0, radius: 6, color: data.color, glowColor: "#22D3EE",
+          x: rx+cr*Math.cos(ca)+(Math.random()-.5)*8,
+          y: ry+cr*Math.sin(ca)*0.9+(Math.random()-.5)*8,
+          z: rz+cr*Math.sin(ca*1.25)*0.42+(Math.random()-.5)*8,
+          vx: 0, vy: 0, vz: 0, radius: 6, color: data.color, glowColor: "#22D3EE",
           pulsePhase: Math.random()*Math.PI*2,
         });
         edges.push({
@@ -246,7 +255,7 @@ function initGraph(w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
   const vnCsl = nodes.find(n => n.id === "vn-csl")!;
   nodes.push({
     id: "vn-amend", type: "amendment", label: "CSL Amendment 2024", shortLabel: "Amend.",
-    countryId: "vn", x: vnCsl.x+85, y: vnCsl.y-35, vx: 0, vy: 0, radius: 9,
+    countryId: "vn", x: vnCsl.x+85, y: vnCsl.y-35, z: vnCsl.z+42, vx: 0, vy: 0, vz: 0, radius: 9,
     color: "#F59E0B", glowColor: "#F59E0B", pulsePhase: Math.random()*Math.PI*2, alerting: true,
     details: {
       category: "Amendment", enacted: "2024", status: "Proposed",
@@ -267,16 +276,21 @@ function initGraph(w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
 
 // ==================== FORCE SIMULATION ====================
 function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
-  const REP = 3000, CK = 0.07, XK = 0.016, GR = 0.0005, D = 0.86;
-  nodes.forEach(n => { n.vx += (w/2-n.x)*GR; n.vy += (h/2-n.y)*GR; });
+  const radius = Math.min(w, h) * 0.34;
+  const REP = 3900, CK = 0.07, XK = 0.016, GR = 0.00045, D = 0.88;
+  nodes.forEach(n => {
+    n.vx += (-n.x) * GR;
+    n.vy += (-n.y) * GR;
+    n.vz += (-n.z) * GR;
+  });
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i+1; j < nodes.length; j++) {
-      const dx=nodes[j].x-nodes[i].x, dy=nodes[j].y-nodes[i].y;
-      const d2=dx*dx+dy*dy||1, d=Math.sqrt(d2);
+      const dx=nodes[j].x-nodes[i].x, dy=nodes[j].y-nodes[i].y, dz=nodes[j].z-nodes[i].z;
+      const d2=dx*dx+dy*dy+dz*dz||1, d=Math.sqrt(d2);
       if (d < (nodes[i].radius+nodes[j].radius+20)*3.5) {
         const f=REP/d2;
-        nodes[i].vx-=(dx/d)*f; nodes[i].vy-=(dy/d)*f;
-        nodes[j].vx+=(dx/d)*f; nodes[j].vy+=(dy/d)*f;
+        nodes[i].vx-=(dx/d)*f; nodes[i].vy-=(dy/d)*f; nodes[i].vz-=(dz/d)*f;
+        nodes[j].vx+=(dx/d)*f; nodes[j].vy+=(dy/d)*f; nodes[j].vz+=(dz/d)*f;
       }
     }
   }
@@ -284,19 +298,27 @@ function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
   edges.forEach(e => {
     const s=nm.get(e.sourceId), t=nm.get(e.targetId);
     if (!s||!t) return;
-    const dx=t.x-s.x, dy=t.y-s.y, d=Math.sqrt(dx*dx+dy*dy)||1;
+    const dx=t.x-s.x, dy=t.y-s.y, dz=t.z-s.z;
+    const d=Math.sqrt(dx*dx+dy*dy+dz*dz)||1;
     const rest=e.type==="cluster"?(s.type==="country"?122:62):265;
     const k=e.type==="cluster"?CK:XK, f=(d-rest)*k;
-    s.vx+=(dx/d)*f; s.vy+=(dy/d)*f;
-    t.vx-=(dx/d)*f; t.vy-=(dy/d)*f;
+    s.vx+=(dx/d)*f; s.vy+=(dy/d)*f; s.vz+=(dz/d)*f;
+    t.vx-=(dx/d)*f; t.vy-=(dy/d)*f; t.vz-=(dz/d)*f;
   });
   nodes.forEach(n => {
-    n.vx=(n.vx+(Math.random()-.5)*0.06)*D;
-    n.vy=(n.vy+(Math.random()-.5)*0.06)*D;
+    n.vx=(n.vx+(Math.random()-.5)*0.05)*D;
+    n.vy=(n.vy+(Math.random()-.5)*0.05)*D;
+    n.vz=(n.vz+(Math.random()-.5)*0.05)*D;
     n.x+=n.vx; n.y+=n.vy;
-    const m=n.radius+12;
-    n.x=Math.max(m,Math.min(w-m,n.x));
-    n.y=Math.max(m,Math.min(h-m,n.y));
+    n.z+=n.vz;
+
+    const d = Math.sqrt(n.x*n.x + n.y*n.y + n.z*n.z) || 1;
+    const maxD = radius * 1.08;
+    if (d > maxD) {
+      const s = maxD / d;
+      n.x *= s; n.y *= s; n.z *= s;
+      n.vx *= 0.7; n.vy *= 0.7; n.vz *= 0.7;
+    }
   });
 }
 
@@ -309,15 +331,52 @@ const EDGE_COLORS: Record<EdgeType, [string, number, number]> = {
 };
 const NODE_ORDER: Record<NodeType, number> = { clause:0, amendment:1, regulation:2, country:3 };
 
+interface GraphView {
+  yaw: number;
+  pitch: number;
+  zoom: number;
+}
+
+interface ProjNode {
+  x: number;
+  y: number;
+  z: number;
+  r: number;
+}
+
+function projectNode(n: GNode, w: number, h: number, view: GraphView): ProjNode {
+  const cy = Math.cos(view.yaw), sy = Math.sin(view.yaw);
+  const cp = Math.cos(view.pitch), sp = Math.sin(view.pitch);
+
+  const x1 = n.x * cy - n.z * sy;
+  const z1 = n.x * sy + n.z * cy;
+  const y2 = n.y * cp - z1 * sp;
+  const z2 = n.y * sp + z1 * cp;
+
+  const cam = 720;
+  const depth = cam + z2;
+  const persp = Math.max(0.2, (cam / Math.max(120, depth)) * view.zoom);
+
+  return {
+    x: w / 2 + x1 * persp,
+    y: h / 2 + y2 * persp,
+    z: z2,
+    r: Math.max(2, n.radius * persp),
+  };
+}
+
 function drawGraph(
   ctx: CanvasRenderingContext2D,
   nodes: GNode[], edges: GEdge[],
   w: number, h: number,
   hovId: string|null, selId: string|null,
-  time: number, dimmed: boolean
-) {
+  time: number, dimmed: boolean,
+  view: GraphView
+): Record<string, ProjNode> {
   ctx.clearRect(0,0,w,h);
   ctx.globalAlpha = dimmed ? 0.22 : 1;
+
+  const projected = new Map<string, ProjNode>(nodes.map(n => [n.id, projectNode(n, w, h, view)]));
 
   ctx.fillStyle="rgba(255,255,255,0.04)";
   for (let x=0;x<w;x+=36) for (let y=0;y<h;y+=36) {
@@ -339,34 +398,44 @@ function drawGraph(
   const nm=new Map(nodes.map(n=>[n.id,n]));
   edges.forEach(e=>{
     const s=nm.get(e.sourceId),t=nm.get(e.targetId);
-    if (!s||!t) return;
+    const ps=projected.get(e.sourceId), pt=projected.get(e.targetId);
+    if (!s||!t||!ps||!pt) return;
     const [rgb,alpha,lw]=EDGE_COLORS[e.type];
-    ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(t.x,t.y);
-    ctx.strokeStyle=`rgba(${rgb},${alpha})`; ctx.lineWidth=lw; ctx.stroke();
+    const depthAlpha = Math.max(0.2, 0.6 + ((ps.z + pt.z) / 2) / 1200);
+    ctx.beginPath(); ctx.moveTo(ps.x,ps.y); ctx.lineTo(pt.x,pt.y);
+    ctx.strokeStyle=`rgba(${rgb},${(alpha * depthAlpha).toFixed(3)})`; ctx.lineWidth=lw; ctx.stroke();
     e.particles.forEach(pp=>{
-      const px=s.x+(t.x-s.x)*pp.progress, py=s.y+(t.y-s.y)*pp.progress;
+      const px=ps.x+(pt.x-ps.x)*pp.progress, py=ps.y+(pt.y-ps.y)*pp.progress;
       ctx.save(); ctx.shadowColor=`rgb(${rgb})`; ctx.shadowBlur=7;
       ctx.beginPath(); ctx.arc(px,py,2,0,Math.PI*2);
       ctx.fillStyle=`rgba(${rgb},${pp.opacity})`; ctx.fill(); ctx.restore();
     });
   });
 
-  [...nodes].sort((a,b)=>NODE_ORDER[a.type]-NODE_ORDER[b.type]).forEach(n=>{
+  [...nodes]
+    .sort((a,b)=>{
+      const pa = projected.get(a.id)!;
+      const pb = projected.get(b.id)!;
+      if (pa.z !== pb.z) return pa.z - pb.z;
+      return NODE_ORDER[a.type]-NODE_ORDER[b.type];
+    })
+    .forEach(n=>{
+    const pn = projected.get(n.id)!;
     const isH=n.id===hovId, isS=n.id===selId;
     const pulse=(Math.sin(time*0.0022+n.pulsePhase)+1)/2;
 
     if (n.type==="country") {
       ctx.save();
-      ctx.beginPath(); ctx.arc(n.x,n.y,n.radius+19+pulse*11,0,Math.PI*2);
+      ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+19+pulse*11,0,Math.PI*2);
       ctx.strokeStyle=h2r(n.glowColor,0.07+pulse*0.06); ctx.lineWidth=1; ctx.stroke();
-      ctx.beginPath(); ctx.arc(n.x,n.y,n.radius+9+pulse*4,0,Math.PI*2);
+      ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+9+pulse*4,0,Math.PI*2);
       ctx.strokeStyle=h2r(n.glowColor,0.18+pulse*0.1); ctx.lineWidth=1.5; ctx.stroke();
       ctx.restore();
     }
     if (n.type==="amendment") {
       const ap=(Math.sin(time*0.008+n.pulsePhase)+1)/2;
       ctx.save();
-      ctx.beginPath(); ctx.arc(n.x,n.y,n.radius+8+ap*6,0,Math.PI*2);
+      ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+8+ap*6,0,Math.PI*2);
       ctx.strokeStyle=h2r("#F59E0B",0.14+ap*0.22); ctx.lineWidth=1; ctx.stroke();
       ctx.restore();
     }
@@ -374,9 +443,9 @@ function drawGraph(
     ctx.save();
     ctx.shadowColor=n.glowColor;
     ctx.shadowBlur=isS?52:isH?35:n.type==="country"?24:n.type==="regulation"?12:6;
-    ctx.beginPath(); ctx.arc(n.x,n.y,n.radius,0,Math.PI*2);
+    ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r,0,Math.PI*2);
     if (n.type==="country") {
-      const gr=ctx.createRadialGradient(n.x-n.radius*0.35,n.y-n.radius*0.35,0,n.x,n.y,n.radius);
+      const gr=ctx.createRadialGradient(pn.x-pn.r*0.35,pn.y-pn.r*0.35,0,pn.x,pn.y,pn.r);
       gr.addColorStop(0,lighten(n.color,50)); gr.addColorStop(1,n.color);
       ctx.fillStyle=gr;
     } else if (n.type==="regulation") {
@@ -389,19 +458,19 @@ function drawGraph(
     ctx.fill(); ctx.restore();
 
     ctx.save();
-    ctx.beginPath(); ctx.arc(n.x,n.y,n.radius,0,Math.PI*2);
+    ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r,0,Math.PI*2);
     ctx.strokeStyle=h2r(n.glowColor,isS?1:isH?0.85:n.type==="country"?0.7:0.4);
     ctx.lineWidth=isS?2.5:1.5; ctx.stroke(); ctx.restore();
 
     if (n.type==="country"&&n.flag) {
-      ctx.font=`${Math.floor(n.radius*0.85)}px sans-serif`;
+      ctx.font=`${Math.floor(pn.r*0.85)}px sans-serif`;
       ctx.textAlign="center"; ctx.textBaseline="middle";
-      ctx.fillText(n.flag,n.x,n.y+1);
+      ctx.fillText(n.flag,pn.x,pn.y+1);
     }
     if (n.alerting) {
       const ap=(Math.sin(time*0.009+n.pulsePhase)+1)/2;
       ctx.save(); ctx.shadowColor="#EF4444"; ctx.shadowBlur=8;
-      ctx.beginPath(); ctx.arc(n.x+n.radius-2,n.y-n.radius+2,4,0,Math.PI*2);
+      ctx.beginPath(); ctx.arc(pn.x+pn.r-2,pn.y-pn.r+2,4,0,Math.PI*2);
       ctx.fillStyle=`rgba(239,68,68,${0.7+ap*0.3})`; ctx.fill(); ctx.restore();
     }
 
@@ -411,7 +480,7 @@ function drawGraph(
       const fs=n.type==="country"?11:9;
       ctx.font=`${n.type==="country"?"600 ":""}${fs}px Inter, sans-serif`;
       const tw=ctx.measureText(label).width, pad=3;
-      const lx=n.x, ly=n.y+n.radius+6;
+      const lx=pn.x, ly=pn.y+pn.r+6;
       ctx.fillStyle="rgba(7,16,24,0.88)";
       ctx.beginPath();
       if ((ctx as any).roundRect) (ctx as any).roundRect(lx-tw/2-pad,ly,tw+pad*2,fs+pad*1.5,3);
@@ -423,20 +492,165 @@ function drawGraph(
     }
   });
   ctx.globalAlpha=1;
+  return Object.fromEntries(projected.entries());
 }
 
 // ==================== GRAPH COMPONENT ====================
 interface GRef {
   nodes:GNode[]; edges:GEdge[]; hovId:string|null; dragId:string|null;
   selId:string|null; time:number; w:number; h:number; init:boolean; raf:number; dimmed:boolean;
+  projected: Record<string, ProjNode>;
+  rotateMode: boolean;
+  moved: number;
+  lastMx: number;
+  lastMy: number;
+  view: {
+    yaw: number;
+    pitch: number;
+    zoom: number;
+    targetYaw: number;
+    targetPitch: number;
+    targetZoom: number;
+  };
 }
 
-function RegulatoryGraph({ onSelect, selId, dimmed }: { onSelect:(n:GNode|null)=>void; selId:string|null; dimmed:boolean; }) {
+function RegulatoryGraph({
+  onSelect,
+  selId,
+  dimmed,
+  simulateAction,
+}: {
+  onSelect:(n:GNode|null)=>void;
+  selId:string|null;
+  dimmed:boolean;
+  simulateAction: SimulateAction;
+}) {
   const cvs = useRef<HTMLCanvasElement>(null);
-  const gr = useRef<GRef>({ nodes:[],edges:[],hovId:null,dragId:null,selId:null,time:0,w:0,h:0,init:false,raf:0,dimmed:false });
+  const gr = useRef<GRef>({
+    nodes:[], edges:[], hovId:null, dragId:null,
+    selId:null, time:0, w:0, h:0, init:false, raf:0, dimmed:false,
+    projected:{}, rotateMode:false, moved:0, lastMx:0, lastMy:0,
+    view:{ yaw:0.42, pitch:-0.18, zoom:1, targetYaw:0.42, targetPitch:-0.18, targetZoom:1 },
+  });
 
-  useEffect(()=>{ gr.current.selId=selId; },[selId]);
+  const findNodeAt = useCallback((mx: number, my: number) => {
+    let found: GNode | null = null;
+    let bestZ = -Infinity;
+    for (const n of gr.current.nodes) {
+      const p = gr.current.projected[n.id];
+      if (!p) continue;
+      const dx = mx - p.x, dy = my - p.y;
+      if (dx*dx + dy*dy < (p.r+6)**2 && p.z > bestZ) {
+        found = n;
+        bestZ = p.z;
+      }
+    }
+    return found;
+  },[]);
+
+  const focusNode = useCallback((n: GNode | null) => {
+    if (!n) {
+      gr.current.view.targetZoom = 1;
+      return;
+    }
+    const yaw = Math.atan2(n.x, n.z);
+    const z1 = Math.hypot(n.x, n.z);
+    const pitch = Math.atan2(n.y, z1);
+    gr.current.view.targetYaw = yaw;
+    gr.current.view.targetPitch = pitch;
+    gr.current.view.targetZoom = 1.95;
+  },[]);
+
+  useEffect(()=>{
+    gr.current.selId=selId;
+    const n = selId ? gr.current.nodes.find(x => x.id === selId) ?? null : null;
+    focusNode(n);
+  },[selId, focusNode]);
   useEffect(()=>{ gr.current.dimmed=dimmed; },[dimmed]);
+
+  useEffect(()=>{
+    if (!simulateAction.tick || !gr.current.init || gr.current.nodes.length===0) return;
+
+    const preferred =
+      (simulateAction.step === "crawler" ? gr.current.nodes.find(n => n.id === "vn-csl") : null) ??
+      (simulateAction.step === "translation" ? gr.current.nodes.find(n => n.id === "th-pdpa") : null) ??
+      (simulateAction.step === "versioning" ? gr.current.nodes.find(n => n.id === "sg-pdpa") : null) ??
+      gr.current.nodes.find(n => n.type === "regulation") ??
+      gr.current.nodes[0];
+    if (!preferred) return;
+
+    const id = `sim-${simulateAction.step}-${simulateAction.tick}`;
+    if (gr.current.nodes.some(n => n.id === id)) return;
+
+    const stepMeta: Record<DemoStep, {label: string; short: string; color: string; desc: string}> = {
+      crawler: {
+        label: "Crawler Agent: New Publication",
+        short: "Crawler",
+        color: "#22D3EE",
+        desc: "Step 2 — The Crawler Agent (1:05–1:30): Playwright + BeautifulSoup detected a newly published or amended legal document on a monitored government portal.",
+      },
+      ocr: {
+        label: "OCR Agent: Scanned PDF Parsed",
+        short: "OCR",
+        color: "#60A5FA",
+        desc: "Step 3 — OCR Processing (1:30–1:55): Tesseract + PaddleOCR converted an image-based legal scan into machine-readable text with structure metadata.",
+      },
+      translation: {
+        label: "Translation Agent: Thai PDPA Normalized",
+        short: "Translate",
+        color: "#A78BFA",
+        desc: "Step 4 — Multilingual Handling (1:55–2:20): Thai-language regulation normalized into English while preserving legal terminology using glossary constraints.",
+      },
+      versioning: {
+        label: "Version Chain Updated",
+        short: "Version",
+        color: "#34D399",
+        desc: "Step 5 — Versioning & Storage (2:20–2:30): full amendment lineage stored with timestamped snapshots for historical legal context.",
+      },
+    };
+    const meta = stepMeta[simulateAction.step];
+
+    const newNode: GNode = {
+      id,
+      type: "amendment",
+      label: meta.label,
+      shortLabel: meta.short,
+      countryId: preferred.countryId,
+      x: preferred.x + 70 + (Math.random() - 0.5) * 24,
+      y: preferred.y - 42 + (Math.random() - 0.5) * 20,
+      z: preferred.z + 64 + (Math.random() - 0.5) * 24,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      radius: 10,
+      color: meta.color,
+      glowColor: meta.color,
+      pulsePhase: Math.random() * Math.PI * 2,
+      alerting: true,
+      details: {
+        category: "Pipeline Simulation",
+        enacted: "Live",
+        status: "Proposed",
+        clauses: 1,
+        amendments: 0,
+        coverage: preferred.countryId ? COUNTRY_DATA[preferred.countryId]?.name || "ASEAN" : "ASEAN",
+        confidence: 0.96,
+        description: meta.desc,
+      },
+    };
+
+    gr.current.nodes.push(newNode);
+    gr.current.edges.push({
+      id: `sim-edge-${simulateAction.step}-${simulateAction.tick}`,
+      sourceId: preferred.id,
+      targetId: id,
+      type: "simulation",
+      particles: [{ progress: Math.random(), speed: 0.004, opacity: 1 }],
+    });
+
+    onSelect(newNode);
+    focusNode(newNode);
+  },[simulateAction, onSelect, focusNode]);
 
   useEffect(()=>{
     const c=cvs.current; if (!c) return;
@@ -455,8 +669,25 @@ function RegulatoryGraph({ onSelect, selId, dimmed }: { onSelect:(n:GNode|null)=
       gr.current.time+=16; tick++;
       gr.current.edges.forEach(e=>e.particles.forEach(p=>{ p.progress+=p.speed; if(p.progress>1)p.progress=0; }));
       if (tick%2===0) applyForces(gr.current.nodes,gr.current.edges,gr.current.w,gr.current.h);
+      gr.current.view.targetYaw += gr.current.rotateMode ? 0 : 0.00055;
+      gr.current.view.yaw += (gr.current.view.targetYaw - gr.current.view.yaw) * 0.14;
+      gr.current.view.pitch += (gr.current.view.targetPitch - gr.current.view.pitch) * 0.14;
+      gr.current.view.zoom += (gr.current.view.targetZoom - gr.current.view.zoom) * 0.1;
       const ctx=c.getContext("2d");
-      if (ctx&&gr.current.init) drawGraph(ctx,gr.current.nodes,gr.current.edges,gr.current.w,gr.current.h,gr.current.hovId,gr.current.selId,gr.current.time,gr.current.dimmed);
+      if (ctx&&gr.current.init) {
+        gr.current.projected = drawGraph(
+          ctx,
+          gr.current.nodes,
+          gr.current.edges,
+          gr.current.w,
+          gr.current.h,
+          gr.current.hovId,
+          gr.current.selId,
+          gr.current.time,
+          gr.current.dimmed,
+          { yaw: gr.current.view.yaw, pitch: gr.current.view.pitch, zoom: gr.current.view.zoom }
+        );
+      }
       gr.current.raf=requestAnimationFrame(loop);
     };
     gr.current.raf=requestAnimationFrame(loop);
@@ -466,33 +697,53 @@ function RegulatoryGraph({ onSelect, selId, dimmed }: { onSelect:(n:GNode|null)=
   const onMove=useCallback((e:React.MouseEvent<HTMLCanvasElement>)=>{
     const r=cvs.current!.getBoundingClientRect();
     const mx=e.clientX-r.left, my=e.clientY-r.top;
-    if (gr.current.dragId) {
-      const n=gr.current.nodes.find(n=>n.id===gr.current.dragId);
-      if (n){n.x=mx;n.y=my;n.vx=0;n.vy=0;} return;
+    if (gr.current.rotateMode) {
+      const dx = mx - gr.current.lastMx;
+      const dy = my - gr.current.lastMy;
+      gr.current.lastMx = mx;
+      gr.current.lastMy = my;
+      gr.current.moved += Math.abs(dx) + Math.abs(dy);
+      gr.current.view.targetYaw -= dx * 0.0052;
+      gr.current.view.targetPitch -= dy * 0.0048;
+      gr.current.view.targetPitch = Math.max(-1.1, Math.min(1.1, gr.current.view.targetPitch));
+      return;
     }
-    let hov:string|null=null;
-    for (const n of gr.current.nodes) { const dx=mx-n.x,dy=my-n.y; if(dx*dx+dy*dy<(n.radius+8)**2){hov=n.id;break;} }
+    const hit = findNodeAt(mx, my);
+    const hov = hit?.id ?? null;
     gr.current.hovId=hov; cvs.current!.style.cursor=hov?"pointer":"default";
-  },[]);
+  },[findNodeAt]);
 
   const onDown=useCallback((e:React.MouseEvent<HTMLCanvasElement>)=>{
     const r=cvs.current!.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
-    for (const n of gr.current.nodes) { const dx=mx-n.x,dy=my-n.y; if(dx*dx+dy*dy<(n.radius+6)**2){gr.current.dragId=n.id;break;} }
-  },[]);
+    const n = findNodeAt(mx, my);
+    gr.current.dragId = n?.id ?? null;
+    gr.current.rotateMode = !n;
+    gr.current.moved = 0;
+    gr.current.lastMx = mx;
+    gr.current.lastMy = my;
+  },[findNodeAt]);
 
-  const onUp=useCallback(()=>{ gr.current.dragId=null; },[]);
+  const onUp=useCallback(()=>{ gr.current.dragId=null; gr.current.rotateMode=false; },[]);
 
   const onClick=useCallback((e:React.MouseEvent<HTMLCanvasElement>)=>{
+    if (gr.current.moved > 6) return;
     const r=cvs.current!.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
-    let found:GNode|null=null;
-    for (const n of gr.current.nodes) { const dx=mx-n.x,dy=my-n.y; if(dx*dx+dy*dy<(n.radius+6)**2){found=n;break;} }
+    const found = findNodeAt(mx, my);
     onSelect(found);
-  },[onSelect]);
+    focusNode(found);
+  },[findNodeAt, focusNode, onSelect]);
+
+  const onWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const z = gr.current.view.targetZoom - e.deltaY * 0.0012;
+    gr.current.view.targetZoom = Math.max(0.65, Math.min(2.6, z));
+  },[]);
 
   return (
     <canvas ref={cvs} className="absolute inset-0 w-full h-full"
       onMouseMove={onMove} onMouseDown={onDown} onMouseUp={onUp}
-      onClick={onClick} onMouseLeave={()=>{gr.current.hovId=null;}} />
+      onClick={onClick} onWheel={onWheel}
+      onMouseLeave={()=>{gr.current.hovId=null; gr.current.rotateMode=false;}} />
   );
 }
 
@@ -647,9 +898,17 @@ function StatRow({label,value,color,dot}:{label:string;value:string|number;color
   </div>;
 }
 
-function IntelPanels() {
+function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
   const [stats,setStats] = useState({regs:2847,amends:12,diffs:7,queue:23,aiConf:94.2,ragH:98.1,memGb:"142.7",conflicts:3,precedents:156});
   const [feedIdx,setFeedIdx] = useState(0);
+  const [extraEvents,setExtraEvents] = useState<LiveEvent[]>([]);
+
+  useEffect(()=>{
+    if (!simulatedEvent) return;
+    setExtraEvents(prev => [simulatedEvent, ...prev].slice(0, 6));
+  },[simulatedEvent]);
+
+  const mergedFeed = [...extraEvents, ...LIVE_EVENTS];
   useEffect(()=>{
     const t=setInterval(()=>{
       setStats(s=>({...s,
@@ -660,12 +919,12 @@ function IntelPanels() {
         aiConf:Math.min(99.9,Math.max(84,s.aiConf+(Math.random()-.5)*0.8)),
         ragH:Math.min(99.9,Math.max(90,s.ragH+(Math.random()-.5)*0.4)),
       }));
-      setFeedIdx(i=>(i+1)%LIVE_EVENTS.length);
+      setFeedIdx(i=>(i+1)%Math.max(1, mergedFeed.length));
     },2800);
     return ()=>clearInterval(t);
-  },[]);
+  },[mergedFeed.length]);
 
-  const feed=LIVE_EVENTS.slice(feedIdx,feedIdx+3).concat(LIVE_EVENTS.slice(0,Math.max(0,3-(LIVE_EVENTS.length-feedIdx))));
+  const feed=mergedFeed.slice(feedIdx,feedIdx+3).concat(mergedFeed.slice(0,Math.max(0,3-(mergedFeed.length-feedIdx))));
   const feedColors:{[k:string]:string}={alert:"#EF4444",diff:"#8B5CF6",verify:"#10B981",ingest:"#3B82F6",analysis:"#22D3EE"};
 
   return <>
@@ -1526,6 +1785,10 @@ export default function App() {
   const [view,setView]=useState<ViewId>("dashboard");
   const [selNode,setSelNode]=useState<GNode|null>(null);
   const isDash=view==="dashboard"||view==="graph";
+  const [simulateAction,setSimulateAction]=useState<SimulateAction>({ tick: 0, step: "crawler" });
+  const [simulatedEvent,setSimulatedEvent]=useState<LiveEvent|null>(null);
+  const [showStoryNotice,setShowStoryNotice]=useState(false);
+  const [storyStep,setStoryStep]=useState<DemoStep>("crawler");
 
   const [compareMode,setCompareMode]=useState(false);
   const [compareLeft,setCompareLeft]=useState<GNode|null>(null);
@@ -1576,14 +1839,74 @@ export default function App() {
     setCompareRight(null);
   };
 
+  const runStorySimulation = (step: DemoStep) => {
+    const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+    const eventMap: Record<DemoStep, LiveEvent> = {
+      crawler: { type: "ingest", text: "Crawler agent detected new publication + amendment update", time: now },
+      ocr: { type: "analysis", text: "OCR pipeline converted scanned PDF to clean structured text", time: now },
+      translation: { type: "verify", text: "Thai PDPA translated to English with legal glossary alignment", time: now },
+      versioning: { type: "diff", text: "Version chain updated: regulation now has 3 timestamped snapshots", time: now },
+    };
+    const event = eventMap[step];
+    setSimulatedEvent(event);
+    setSimulateAction(prev => ({ tick: prev.tick + 1, step }));
+    setStoryStep(step);
+    setShowStoryNotice(true);
+    window.setTimeout(() => setShowStoryNotice(false), 12000);
+  };
+
   return (
     <div className="relative w-full h-screen overflow-hidden" style={{background:"#071018",fontFamily:"Inter, sans-serif"}}>
-      <RegulatoryGraph onSelect={onGraphSelect} selId={selNode?.id||null} dimmed={!isDash}/>
+      <RegulatoryGraph onSelect={onGraphSelect} selId={selNode?.id||null} dimmed={!isDash} simulateAction={simulateAction}/>
 
       <FloatingNav cur={view} onNav={onNav}/>
 
       {isDash&&(
-        <div className="absolute top-[84px] left-1/2 -translate-x-1/2 z-40 flex items-center gap-2">
+        <div className="absolute top-[84px] left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 flex-wrap justify-center">
+          <button
+            onClick={()=>runStorySimulation("crawler")}
+            className="px-3 py-2 rounded-full text-xs font-medium transition-colors"
+            style={{
+              background: "rgba(34,211,238,0.15)",
+              border: "1px solid rgba(34,211,238,0.35)",
+              color: "#67E8F9",
+              backdropFilter: "blur(16px)",
+            }}>
+            Step 2: Crawler
+          </button>
+          <button
+            onClick={()=>runStorySimulation("ocr")}
+            className="px-3 py-2 rounded-full text-xs font-medium transition-colors"
+            style={{
+              background: "rgba(59,130,246,0.15)",
+              border: "1px solid rgba(59,130,246,0.35)",
+              color: "#93C5FD",
+              backdropFilter: "blur(16px)",
+            }}>
+            Step 3: OCR
+          </button>
+          <button
+            onClick={()=>runStorySimulation("translation")}
+            className="px-3 py-2 rounded-full text-xs font-medium transition-colors"
+            style={{
+              background: "rgba(139,92,246,0.15)",
+              border: "1px solid rgba(139,92,246,0.35)",
+              color: "#C4B5FD",
+              backdropFilter: "blur(16px)",
+            }}>
+            Step 4: Translation
+          </button>
+          <button
+            onClick={()=>runStorySimulation("versioning")}
+            className="px-3 py-2 rounded-full text-xs font-medium transition-colors"
+            style={{
+              background: "rgba(16,185,129,0.15)",
+              border: "1px solid rgba(16,185,129,0.35)",
+              color: "#6EE7B7",
+              backdropFilter: "blur(16px)",
+            }}>
+            Step 5: Versioning
+          </button>
           <button
             onClick={()=>{
               // Turning on compare mode starts a fresh comparison.
@@ -1613,7 +1936,104 @@ export default function App() {
         </div>
       )}
 
-      {isDash&&<IntelPanels/>}
+      {isDash&&<IntelPanels simulatedEvent={simulatedEvent}/>}
+
+      <AnimatePresence>
+        {isDash && showStoryNotice && (
+          <motion.div
+            initial={{opacity:0,y:-8,x:20}}
+            animate={{opacity:1,y:0,x:0}}
+            exit={{opacity:0,y:-8,x:20}}
+            className="absolute top-[126px] right-4 z-50 w-[540px] rounded-xl p-3"
+            style={{
+              background:"rgba(8,18,30,0.94)",
+              border:"1px solid rgba(34,211,238,0.35)",
+              boxShadow:"0 12px 36px rgba(0,0,0,0.5)",
+            }}>
+            <div className="flex items-start gap-2">
+              <Bell size={14} style={{color:"#22D3EE",marginTop:2}}/>
+              <div className="min-w-0 w-full">
+                {storyStep === "crawler" && (
+                  <>
+                    <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#22D3EE",fontFamily:"IBM Plex Sans, sans-serif"}}>
+                      Step 2 — The Crawler Agent (1:05–1:30)
+                    </p>
+                    <p className="text-xs mt-1 leading-relaxed" style={{color:"#94A3B8"}}>
+                      Show a screen recording or mockup of the crawler running. Playwright + BeautifulSoup detecting new documents on a government portal. Highlight: it detects new publications, updated pages, amended documents — not just one-time scraping but continuous monitoring. Voiceover: "A crawler agent monitors each source on a configurable schedule. When a new law is published or an existing one is amended, the system detects the change automatically."
+                    </p>
+                  </>
+                )}
+
+                {storyStep === "ocr" && (
+                  <>
+                    <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#60A5FA",fontFamily:"IBM Plex Sans, sans-serif"}}>
+                      Step 3 — OCR Processing (1:30–1:55)
+                    </p>
+                    <p className="text-xs mt-1 leading-relaxed" style={{color:"#94A3B8"}}>
+                      Voiceover: "Many government documents in Asia-Pacific are published as scanned images — not searchable text. AILA uses Tesseract and PaddleOCR to convert these into machine-readable content, preserving document structure and layout metadata."
+                    </p>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <div className="rounded-lg p-2" style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)"}}>
+                        <p className="text-[11px] uppercase" style={{color:"#64748B"}}>Input (Scanned PDF)</p>
+                        <p className="text-xs mt-1" style={{color:"#94A3B8"}}>No selectable text · skewed scan · stamps/noise</p>
+                      </div>
+                      <div className="rounded-lg p-2" style={{background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.25)"}}>
+                        <p className="text-[11px] uppercase" style={{color:"#93C5FD"}}>Output (Extracted Text)</p>
+                        <p className="text-xs mt-1" style={{color:"#DBEAFE"}}>Structured clauses + headings + page/line metadata</p>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {storyStep === "translation" && (
+                  <>
+                    <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#C4B5FD",fontFamily:"IBM Plex Sans, sans-serif"}}>
+                      Step 4 — Multilingual Handling (1:55–2:20)
+                    </p>
+                    <p className="text-xs mt-1 leading-relaxed" style={{color:"#94A3B8"}}>
+                      Voiceover: "Regulations across ASEAN are published in local languages. A translation agent normalizes content into English while preserving legal terminology accuracy through domain-specific glossaries."
+                    </p>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <div className="rounded-lg p-2" style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)"}}>
+                        <p className="text-[11px] uppercase" style={{color:"#64748B"}}>Thai Source</p>
+                        <p className="text-xs mt-1" style={{color:"#94A3B8"}}>“พระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล…”</p>
+                      </div>
+                      <div className="rounded-lg p-2" style={{background:"rgba(139,92,246,0.09)",border:"1px solid rgba(139,92,246,0.25)"}}>
+                        <p className="text-[11px] uppercase" style={{color:"#C4B5FD"}}>English Normalized</p>
+                        <p className="text-xs mt-1" style={{color:"#E9D5FF"}}>“Personal Data Protection obligations…”</p>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {storyStep === "versioning" && (
+                  <>
+                    <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#6EE7B7",fontFamily:"IBM Plex Sans, sans-serif"}}>
+                      Step 5 — Versioning &amp; Storage (2:20–2:30)
+                    </p>
+                    <p className="text-xs mt-1 leading-relaxed" style={{color:"#94A3B8"}}>
+                      Voiceover: "Every document is stored with its full amendment chain — so the system knows not just what a law says today, but what it said before."
+                    </p>
+                    <div className="mt-2 space-y-1.5">
+                      {[
+                        { v: "v3 (Current)", t: "2026-05-25 10:20 UTC", c: "#6EE7B7" },
+                        { v: "v2", t: "2025-11-03 14:40 UTC", c: "#93C5FD" },
+                        { v: "v1", t: "2024-08-16 09:05 UTC", c: "#A78BFA" },
+                      ].map((row)=> (
+                        <div key={row.v} className="rounded-lg px-2.5 py-2 flex items-center justify-between"
+                          style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)"}}>
+                          <span className="text-xs" style={{color:row.c,fontFamily:"JetBrains Mono, monospace"}}>{row.v}</span>
+                          <span className="text-xs" style={{color:"#64748B",fontFamily:"JetBrains Mono, monospace"}}>{row.t}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {isDash && compareMode && compareLeft && (
