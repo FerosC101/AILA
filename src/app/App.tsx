@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  LayoutDashboard, Network, GitBranch, FlaskConical, Database,
-  Globe, MessageSquare, Code2, Settings, X, AlertTriangle,
-  CheckCircle2, Zap, Brain, FileText, Activity, Shield,
-  ChevronRight, Clock, TrendingUp, Eye, Cpu, Radio,
-  ArrowRight, Terminal, Server, Wifi, BarChart3,
-  Send, Sparkles, Lock, BookOpen, Filter, RefreshCw,
-  Layers, Link, Search, Bell, User, Play,
+  Network, GitBranch, FlaskConical, Database,
+  Globe, MessageSquare, Code2, Settings, X,
+  Brain,
+  ChevronRight, Radio,
+  Send,
+  Link,
 } from "lucide-react";
 
 // ==================== TYPES ====================
@@ -324,10 +323,10 @@ function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
 
 // ==================== CANVAS DRAWING ====================
 const EDGE_COLORS: Record<EdgeType, [string, number, number]> = {
-  cluster:    ["59,130,246", 0.13, 1],
-  precedent:  ["139,92,246", 0.2, 0.8],
-  amendment:  ["245,158,11", 0.32, 1.2],
-  simulation: ["34,211,238", 0.22, 0.8],
+  cluster:    ["140,150,170", 0.18, 0.65],
+  precedent:  ["139,92,246",  0.45, 0.8],
+  amendment:  ["245,158,11",  0.65, 1.1],
+  simulation: ["6,182,212",   0.48, 0.8],
 };
 const NODE_ORDER: Record<NodeType, number> = { clause:0, amendment:1, regulation:2, country:3 };
 
@@ -378,22 +377,14 @@ function drawGraph(
 
   const projected = new Map<string, ProjNode>(nodes.map(n => [n.id, projectNode(n, w, h, view)]));
 
-  ctx.fillStyle="rgba(255,255,255,0.04)";
-  for (let x=0;x<w;x+=36) for (let y=0;y<h;y+=36) {
-    ctx.beginPath(); ctx.arc(x,y,0.6,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle="rgba(255,255,255,0.035)";
+  for (let x=0;x<w;x+=48) for (let y=0;y<h;y+=48) {
+    ctx.beginPath(); ctx.arc(x,y,0.38,0,Math.PI*2); ctx.fill();
   }
-
-  const p=(Math.sin(time*0.0007)+1)/2;
-  [
-    {x:0.12,y:0.2,c:"59,130,246",s:0.32},{x:0.88,y:0.7,c:"139,92,246",s:0.28},
-    {x:0.5,y:0.88,c:"34,211,238",s:0.2},{x:0.5,y:0.12,c:"16,185,129",s:0.18},
-  ].forEach(g=>{
-    const gx=g.x*w,gy=g.y*h,gr=g.s*w;
-    const grad=ctx.createRadialGradient(gx,gy,0,gx,gy,gr);
-    grad.addColorStop(0,`rgba(${g.c},${(0.042+p*0.022).toFixed(3)})`);
-    grad.addColorStop(1,"transparent");
-    ctx.fillStyle=grad; ctx.fillRect(0,0,w,h);
-  });
+  const cg=ctx.createRadialGradient(w/2,h/2,0,w/2,h/2,Math.min(w,h)*0.5);
+  cg.addColorStop(0,"rgba(99,102,241,0.05)");
+  cg.addColorStop(1,"transparent");
+  ctx.fillStyle=cg; ctx.fillRect(0,0,w,h);
 
   const nm=new Map(nodes.map(n=>[n.id,n]));
   edges.forEach(e=>{
@@ -406,8 +397,8 @@ function drawGraph(
     ctx.strokeStyle=`rgba(${rgb},${(alpha * depthAlpha).toFixed(3)})`; ctx.lineWidth=lw; ctx.stroke();
     e.particles.forEach(pp=>{
       const px=ps.x+(pt.x-ps.x)*pp.progress, py=ps.y+(pt.y-ps.y)*pp.progress;
-      ctx.save(); ctx.shadowColor=`rgb(${rgb})`; ctx.shadowBlur=7;
-      ctx.beginPath(); ctx.arc(px,py,2,0,Math.PI*2);
+      ctx.save(); ctx.shadowColor=`rgb(${rgb})`; ctx.shadowBlur=5;
+      ctx.beginPath(); ctx.arc(px,py,1.5,0,Math.PI*2);
       ctx.fillStyle=`rgba(${rgb},${pp.opacity})`; ctx.fill(); ctx.restore();
     });
   });
@@ -424,71 +415,84 @@ function drawGraph(
     const isH=n.id===hovId, isS=n.id===selId;
     const pulse=(Math.sin(time*0.0022+n.pulsePhase)+1)/2;
 
+    // Clause nodes: micro dots, skip full pipeline
+    if (n.type==="clause") {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(pn.x,pn.y,Math.max(1.2,pn.r*0.42),0,Math.PI*2);
+      ctx.fillStyle=h2r(n.color,0.38);
+      ctx.fill(); ctx.restore();
+      return;
+    }
+
+    // Country: subtle breathing outer ring
     if (n.type==="country") {
       ctx.save();
-      ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+19+pulse*11,0,Math.PI*2);
-      ctx.strokeStyle=h2r(n.glowColor,0.07+pulse*0.06); ctx.lineWidth=1; ctx.stroke();
-      ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+9+pulse*4,0,Math.PI*2);
-      ctx.strokeStyle=h2r(n.glowColor,0.18+pulse*0.1); ctx.lineWidth=1.5; ctx.stroke();
+      ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+6+pulse*3,0,Math.PI*2);
+      ctx.strokeStyle=h2r(n.glowColor,0.2+pulse*0.08); ctx.lineWidth=1; ctx.stroke();
       ctx.restore();
     }
+
+    // Amendment: pulsing amber ring
     if (n.type==="amendment") {
       const ap=(Math.sin(time*0.008+n.pulsePhase)+1)/2;
       ctx.save();
-      ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+8+ap*6,0,Math.PI*2);
-      ctx.strokeStyle=h2r("#F59E0B",0.14+ap*0.22); ctx.lineWidth=1; ctx.stroke();
+      ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+5+ap*4,0,Math.PI*2);
+      ctx.strokeStyle=h2r("#F59E0B",0.2+ap*0.32); ctx.lineWidth=1; ctx.stroke();
       ctx.restore();
     }
 
+    // Obsidian-style node fill — solid vivid circles against dark background
     ctx.save();
-    ctx.shadowColor=n.glowColor;
-    ctx.shadowBlur=isS?52:isH?35:n.type==="country"?24:n.type==="regulation"?12:6;
+    if (isS||isH) { ctx.shadowColor=n.glowColor; ctx.shadowBlur=isS?20:11; }
     ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r,0,Math.PI*2);
     if (n.type==="country") {
-      const gr=ctx.createRadialGradient(pn.x-pn.r*0.35,pn.y-pn.r*0.35,0,pn.x,pn.y,pn.r);
-      gr.addColorStop(0,lighten(n.color,50)); gr.addColorStop(1,n.color);
+      const gr=ctx.createRadialGradient(pn.x-pn.r*0.28,pn.y-pn.r*0.28,0,pn.x,pn.y,pn.r);
+      gr.addColorStop(0,lighten(n.color,36)); gr.addColorStop(1,n.color);
       ctx.fillStyle=gr;
     } else if (n.type==="regulation") {
-      ctx.fillStyle=h2r(n.glowColor,0.22);
-    } else if (n.type==="amendment") {
-      ctx.fillStyle=h2r("#F59E0B",0.28);
+      ctx.fillStyle=h2r(n.glowColor,isS||isH?0.95:0.78);
     } else {
-      ctx.fillStyle=h2r("#22D3EE",0.12);
+      ctx.fillStyle=h2r("#F59E0B",0.88);
     }
-    ctx.fill(); ctx.restore();
+    ctx.fill();
+    // Thin ring on regulation / amendment only
+    if (n.type!=="country") {
+      ctx.strokeStyle=h2r(n.type==="amendment"?"#F59E0B":n.glowColor,isS?1:isH?0.75:0.45);
+      ctx.lineWidth=isS?1.5:0.8; ctx.stroke();
+    }
+    ctx.restore();
 
-    ctx.save();
-    ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r,0,Math.PI*2);
-    ctx.strokeStyle=h2r(n.glowColor,isS?1:isH?0.85:n.type==="country"?0.7:0.4);
-    ctx.lineWidth=isS?2.5:1.5; ctx.stroke(); ctx.restore();
-
+    // Flag text for country nodes
     if (n.type==="country"&&n.flag) {
-      ctx.font=`${Math.floor(pn.r*0.85)}px sans-serif`;
+      ctx.save();
+      ctx.font=`600 ${Math.floor(pn.r*0.74)}px sans-serif`;
       ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillStyle="#FFFFFF";
+      ctx.shadowColor="rgba(0,0,0,0.5)"; ctx.shadowBlur=3;
       ctx.fillText(n.flag,pn.x,pn.y+1);
+      ctx.restore();
     }
+
+    // Alert dot
     if (n.alerting) {
       const ap=(Math.sin(time*0.009+n.pulsePhase)+1)/2;
-      ctx.save(); ctx.shadowColor="#EF4444"; ctx.shadowBlur=8;
-      ctx.beginPath(); ctx.arc(pn.x+pn.r-2,pn.y-pn.r+2,4,0,Math.PI*2);
-      ctx.fillStyle=`rgba(239,68,68,${0.7+ap*0.3})`; ctx.fill(); ctx.restore();
+      ctx.save(); ctx.shadowColor="#EF4444"; ctx.shadowBlur=5;
+      ctx.beginPath(); ctx.arc(pn.x+pn.r-1,pn.y-pn.r+1,3,0,Math.PI*2);
+      ctx.fillStyle=`rgba(239,68,68,${0.8+ap*0.2})`; ctx.fill(); ctx.restore();
     }
 
+    // Obsidian-style labels: clean floating text, no pill background
     const showLabel=n.type==="country"||isH||isS;
     if (showLabel) {
       const label=n.shortLabel||n.label;
       const fs=n.type==="country"?11:9;
-      ctx.font=`${n.type==="country"?"600 ":""}${fs}px Inter, sans-serif`;
-      const tw=ctx.measureText(label).width, pad=3;
-      const lx=pn.x, ly=pn.y+pn.r+6;
-      ctx.fillStyle="rgba(7,16,24,0.88)";
-      ctx.beginPath();
-      if ((ctx as any).roundRect) (ctx as any).roundRect(lx-tw/2-pad,ly,tw+pad*2,fs+pad*1.5,3);
-      else ctx.rect(lx-tw/2-pad,ly,tw+pad*2,fs+pad*1.5);
-      ctx.fill();
-      ctx.fillStyle=n.type==="country"?"#F5F7FA":"#94A3B8";
+      ctx.save();
+      ctx.font=`${n.type==="country"?"600 ":"400 "}${fs}px Inter, sans-serif`;
       ctx.textAlign="center"; ctx.textBaseline="top";
-      ctx.fillText(label,lx,ly+pad*0.75);
+      ctx.shadowColor="rgba(0,0,0,0.95)"; ctx.shadowBlur=6;
+      ctx.fillStyle=n.type==="country"?"#FFFFFF":"rgba(200,210,225,0.9)";
+      ctx.fillText(label,pn.x,pn.y+pn.r+6);
+      ctx.restore();
     }
   });
   ctx.globalAlpha=1;
@@ -749,149 +753,134 @@ function RegulatoryGraph({
 
 // ==================== NAV ====================
 const NAV_ITEMS: Array<{id:ViewId;label:string;icon:React.ElementType;short:string}> = [
-  {id:"dashboard",label:"Dashboard",icon:LayoutDashboard,short:"Dashboard"},
-  {id:"graph",label:"Regulatory Graph",icon:Network,short:"Graph"},
-  {id:"diff",label:"Diff Engine",icon:GitBranch,short:"Diff"},
+  {id:"sme",label:"Consultation",icon:MessageSquare,short:"Chat"},
   {id:"simulation",label:"Simulation",icon:FlaskConical,short:"Sim"},
-  {id:"memory",label:"Memory Layer",icon:Database,short:"Memory"},
-  {id:"countries",label:"Countries",icon:Globe,short:"Countries"},
-  {id:"sme",label:"SME Assistant",icon:MessageSquare,short:"SME"},
-  {id:"api",label:"API",icon:Code2,short:"API"},
+  {id:"memory",label:"Document Archive",icon:Database,short:"Memory"},
   {id:"settings",label:"Settings",icon:Settings,short:"Settings"},
 ];
 
-function FloatingNav({
-  cur,
-  onNav,
-}: {
-  cur: ViewId;
-  onNav: (v: ViewId) => void;
-}) {
-  const [hov, setHov] = useState<ViewId | null>(null);
+function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const isDash = cur === "dashboard" || cur === "graph";
+  const toolActive = isDash || cur === "countries" || cur === "diff" || cur === "api";
+
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+
+  const TOOLS: Array<{id:ViewId;label:string;desc:string;icon:React.ElementType}> = [
+    {id:"dashboard",label:"Regulatory Graph",desc:"Live ASEAN regulatory network",icon:Network},
+    {id:"countries",label:"Jurisdiction Overview",desc:"Country-level compliance data",icon:Globe},
+    {id:"diff",label:"Country Comparison",desc:"Cross-border transfer analysis",icon:GitBranch},
+    {id:"api",label:"API Reference",desc:"Endpoints and authentication",icon:Code2},
+  ];
 
   return (
-    <nav className="fixed top-3 left-1/2 -translate-x-1/2 z-50 w-auto">
+    <header className="fixed top-0 left-0 right-0 z-50 flex flex-col" style={{height:"56px"}}>
+      <div style={{height:"3px",flexShrink:0,background:"linear-gradient(90deg,#1D4ED8 0%,#3B82F6 52%,#7C3AED 100%)"}}/>
       <div
-        className="flex items-center gap-0.5 px-2 py-1 rounded-full overflow-visible"
-        style={{
-          background: "rgba(11,18,28,0.82)",
-          backdropFilter: "blur(24px)",
-          border: "1px solid rgba(255,255,255,0.1)",
-          boxShadow:
-            "0 0 0 1px rgba(255,255,255,0.04),0 8px 40px rgba(0,0,0,0.5)",
-        }}
+        className="flex items-center flex-1 w-full px-6"
+        style={{background:"#0D1F40",borderBottom:"1px solid rgba(255,255,255,0.07)"}}
       >
-        {/* LOGO */}
-        <div
-          className="flex items-center px-2 pr-3 mr-1 border-r flex-shrink-0 overflow-visible"
-          style={{
-            borderColor: "rgba(255,255,255,0.08)",
-          }}
-        >
-          <img
-            src="/src/assets/aila-logo-2.png"
-            alt="AILA"
-            className="block flex-shrink-0 max-w-none"
-            style={{
-              width: "140px",
-              height: "auto",
-              objectFit: "contain",
-              // filter:
-              //   "invert(1) drop-shadow(0 0 10px rgba(59,130,246,0.35))",
-            }}
-          />
-        </div>
+        <button onClick={() => onNav("dashboard")} className="flex items-center gap-3 shrink-0 mr-8">
+          <img src="/src/assets/aila-logo-2.png" alt="AILA"
+            style={{height:"27px",width:"auto",objectFit:"contain",filter:"brightness(1.1)"}}/>
+          <span
+            className="hidden md:block text-xs font-semibold tracking-widest uppercase pl-4 border-l"
+            style={{color:"rgba(255,255,255,0.36)",borderColor:"rgba(255,255,255,0.14)",fontFamily:"IBM Plex Sans, sans-serif",letterSpacing:"0.12em"}}
+          >
+            Regulatory Intelligence
+          </span>
+        </button>
 
-        {/* NAV ITEMS */}
-        {NAV_ITEMS.map((item) => {
-          const Icon = item.icon;
-          const isA = cur === item.id;
-          const isH = hov === item.id;
+        <div className="flex-1" />
 
-          return (
-            <button
-              key={item.id}
-              onClick={() => onNav(item.id)}
-              onMouseEnter={() => setHov(item.id)}
-              onMouseLeave={() => setHov(null)}
-              className="relative flex items-center gap-1 px-2 py-1 rounded-full transition-all duration-150 flex-shrink-0"
-              style={{
-                background: isA
-                  ? "rgba(59,130,246,0.16)"
-                  : isH
-                  ? "rgba(255,255,255,0.06)"
-                  : "transparent",
-                color: isA
-                  ? "#60A5FA"
-                  : isH
-                  ? "#F5F7FA"
-                  : "#64748B",
-              }}
-            >
-              {isA && (
-                <span
-                  className="absolute inset-0 rounded-full"
-                  style={{
-                    boxShadow: "0 0 14px rgba(59,130,246,0.28)",
-                    border: "1px solid rgba(59,130,246,0.32)",
-                  }}
-                />
-              )}
-
-              <Icon size={11} />
-
-              <span
-                className="text-[11px] font-medium whitespace-nowrap"
-                style={{ fontFamily: "Inter, sans-serif" }}
+        <nav className="flex items-center h-full">
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const isA = cur === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => onNav(item.id)}
+                className="flex items-center gap-2 px-4 text-sm font-medium transition-colors h-full"
+                style={{color:isA?"#93C5FD":"rgba(255,255,255,0.56)",borderBottom:isA?"2px solid #60A5FA":"2px solid transparent"}}
               >
-                {item.short}
-              </span>
-            </button>
-          );
-        })}
+                <Icon size={13} />
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
 
-        {/* DIVIDER */}
-        <div
-          className="w-px h-3 mx-1 flex-shrink-0"
-          style={{ background: "rgba(255,255,255,0.08)" }}
-        />
+        <div className="mx-4 shrink-0" style={{width:"1px",height:"20px",background:"rgba(255,255,255,0.12)"}} />
 
-        {/* NOTIFICATIONS */}
-        <button
-          className="p-1 rounded-full transition-colors flex-shrink-0"
-          style={{ color: "#64748B" }}
-          title="Notifications"
-        >
-          <Bell size={11} />
-        </button>
+        <div ref={menuRef} className="relative shrink-0 h-full flex items-center">
+          <button
+            onClick={() => setMenuOpen((o) => !o)}
+            className="flex items-center gap-2 px-4 text-sm font-medium transition-colors h-full"
+            style={{color:toolActive?"#93C5FD":"rgba(255,255,255,0.56)",borderBottom:toolActive?"2px solid #60A5FA":"2px solid transparent"}}
+          >
+            <Network size={13} />
+            Graph
+            <ChevronRight size={11}
+              style={{transform:menuOpen?"rotate(90deg)":"rotate(0deg)",transition:"transform 0.15s"}}/>
+          </button>
 
-        {/* USER */}
-        <button
-          className="w-6 h-6 rounded-full flex items-center justify-center ml-0.5 flex-shrink-0"
-          style={{
-            background: "rgba(59,130,246,0.2)",
-            border: "1px solid rgba(59,130,246,0.3)",
-          }}
-        >
-          <User size={10} style={{ color: "#60A5FA" }} />
-        </button>
+          <AnimatePresence>
+            {menuOpen && (
+              <motion.div
+                initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-6}}
+                transition={{duration:0.12}}
+                className="absolute right-0 top-full w-64 rounded-lg py-1 z-50"
+                style={{marginTop:"4px",background:"#FFFFFF",border:"1px solid #E2E8F0",boxShadow:"0 8px 28px rgba(0,0,0,0.2),0 2px 8px rgba(0,0,0,0.1)"}}
+              >
+                {TOOLS.map((tool) => {
+                  const Icon = tool.icon;
+                  const isA = tool.id === "dashboard" ? isDash : cur === tool.id;
+                  return (
+                    <button
+                      key={tool.id}
+                      onClick={() => { onNav(tool.id); setMenuOpen(false); }}
+                      className="w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50"
+                      style={{borderLeft:`3px solid ${isA?"#1D4ED8":"transparent"}`}}
+                    >
+                      <Icon size={14} style={{color:isA?"#1D4ED8":"#94A3B8",marginTop:"2px",flexShrink:0}}/>
+                      <div>
+                        <div className="text-sm font-medium leading-tight" style={{color:isA?"#1D4ED8":"#1E293B"}}>
+                          {tool.label}
+                        </div>
+                        <div className="text-xs mt-0.5" style={{color:"#94A3B8"}}>{tool.desc}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
-    </nav>
+    </header>
   );
 }
 
 // ==================== INTEL PANELS ====================
-const PANEL_STYLE = {background:"rgba(11,18,28,0.78)",backdropFilter:"blur(18px)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"10px",boxShadow:"0 4px 24px rgba(0,0,0,0.45)"};
+const PANEL_STYLE = {background:"rgba(255,255,255,0.93)",backdropFilter:"blur(18px)",border:"1px solid rgba(0,0,0,0.08)",borderRadius:"10px",boxShadow:"0 2px 12px rgba(0,0,0,0.08)"};
 
 function PanelTitle({children}:{children:React.ReactNode}) {
-  return <div className="px-3 py-2 border-b" style={{borderColor:"rgba(255,255,255,0.06)"}}>
+  return <div className="px-3 py-2 border-b" style={{borderColor:"rgba(0,0,0,0.06)"}}>
     <span className="text-xs font-semibold tracking-widest uppercase" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>{children}</span>
   </div>;
 }
 function StatRow({label,value,color,dot}:{label:string;value:string|number;color?:string;dot?:string}) {
   return <div className="flex items-center justify-between">
     <span className="text-xs" style={{color:"#64748B"}}>{label}</span>
-    <span className="flex items-center gap-1.5 text-xs font-medium" style={{color:color||"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>
+    <span className="flex items-center gap-1.5 text-xs font-medium" style={{color:color||"#374151",fontFamily:"JetBrains Mono, monospace"}}>
       {dot&&<span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{background:dot}}/>}
       {value}
     </span>
@@ -925,7 +914,7 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
   },[mergedFeed.length]);
 
   const feed=mergedFeed.slice(feedIdx,feedIdx+3).concat(mergedFeed.slice(0,Math.max(0,3-(mergedFeed.length-feedIdx))));
-  const feedColors:{[k:string]:string}={alert:"#EF4444",diff:"#8B5CF6",verify:"#10B981",ingest:"#3B82F6",analysis:"#22D3EE"};
+  const feedColors:{[k:string]:string}={alert:"#EF4444",diff:"#8B5CF6",verify:"#10B981",ingest:"#3B82F6",analysis:"#1D4ED8"};
 
   return <>
     {/* Top Left */}
@@ -936,9 +925,9 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
         <StatRow label="Active Jurisdictions" value="6 / 6" color="#10B981" dot="#10B981"/>
         <StatRow label="Regulations Tracked" value={stats.regs.toLocaleString()} color="#60A5FA"/>
         <StatRow label="Amendment Alerts" value={stats.amends} color={stats.amends>10?"#F59E0B":"#94A3B8"} dot={stats.amends>0?"#F59E0B":undefined}/>
-        <StatRow label="Crawler Activity" value="3 active" color="#10B981" dot="#10B981"/>
-        <div className="pt-1 border-t" style={{borderColor:"rgba(255,255,255,0.06)"}}>
-          <StatRow label="OCR Queue" value={`${stats.queue} docs`} color="#64748B"/>
+        <StatRow label="Monitor Activity" value="3 active" color="#10B981" dot="#10B981"/>
+        <div className="pt-1 border-t" style={{borderColor:"rgba(0,0,0,0.07)"}}>
+          <StatRow label="Processing Queue" value={`${stats.queue} docs`} color="#64748B"/>
         </div>
       </div>
     </motion.div>
@@ -946,35 +935,35 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
     {/* Top Right */}
     <motion.div initial={{opacity:0,x:20}} animate={{opacity:1,x:0}} transition={{delay:0.35,duration:0.5}}
       className="absolute top-20 right-4 w-56 z-40" style={PANEL_STYLE}>
-      <PanelTitle>Intelligence Core</PanelTitle>
+      <PanelTitle>AI Analytics</PanelTitle>
       <div className="p-3 space-y-2">
         <div>
           <div className="flex justify-between mb-1">
             <span className="text-xs" style={{color:"#64748B"}}>AI Confidence</span>
             <span className="text-xs font-medium" style={{color:"#10B981",fontFamily:"JetBrains Mono, monospace"}}>{stats.aiConf.toFixed(1)}%</span>
           </div>
-          <div className="h-1 rounded-full overflow-hidden" style={{background:"rgba(255,255,255,0.06)"}}>
+          <div className="h-1 rounded-full overflow-hidden" style={{background:"rgba(0,0,0,0.07)"}}>
             <div className="h-full rounded-full transition-all duration-700" style={{width:`${stats.aiConf}%`,background:"linear-gradient(90deg,#10B98180,#10B981)"}}/>
           </div>
         </div>
         <div>
           <div className="flex justify-between mb-1">
-            <span className="text-xs" style={{color:"#64748B"}}>RAG Health</span>
+            <span className="text-xs" style={{color:"#64748B"}}>Knowledge Base</span>
             <span className="text-xs font-medium" style={{color:"#10B981",fontFamily:"JetBrains Mono, monospace"}}>{stats.ragH.toFixed(1)}%</span>
           </div>
-          <div className="h-1 rounded-full overflow-hidden" style={{background:"rgba(255,255,255,0.06)"}}>
+          <div className="h-1 rounded-full overflow-hidden" style={{background:"rgba(0,0,0,0.07)"}}>
             <div className="h-full rounded-full transition-all duration-700" style={{width:`${stats.ragH}%`,background:"linear-gradient(90deg,#3B82F680,#3B82F6)"}}/>
           </div>
         </div>
-        <StatRow label="Semantic Diffs" value={stats.diffs} color="#8B5CF6" dot="#8B5CF6"/>
-        <StatRow label="Memory Growth" value={`${stats.memGb} GB`} color="#22D3EE"/>
+        <StatRow label="Change Detections" value={stats.diffs} color="#8B5CF6" dot="#8B5CF6"/>
+        <StatRow label="Document Index" value={`${stats.memGb} GB`} color="#1D4ED8"/>
       </div>
     </motion.div>
 
     {/* Bottom Left */}
     <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} transition={{delay:0.4,duration:0.5}}
       className="absolute bottom-4 left-4 w-60 z-40" style={PANEL_STYLE}>
-      <PanelTitle>Live Ingestion Feed</PanelTitle>
+      <PanelTitle>Activity Feed</PanelTitle>
       <div className="p-3 space-y-1.5">
         {feed.map((ev,i)=>(
           <motion.div key={`${feedIdx}-${i}`} initial={{opacity:0,x:-8}} animate={{opacity:1,x:0}} transition={{delay:i*0.06}}
@@ -986,7 +975,7 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
             </div>
           </motion.div>
         ))}
-        <div className="pt-1.5 border-t flex items-center gap-1.5" style={{borderColor:"rgba(255,255,255,0.06)"}}>
+        <div className="pt-1.5 border-t flex items-center gap-1.5" style={{borderColor:"rgba(0,0,0,0.06)"}}>
           <Radio size={10} style={{color:"#10B981"}} className="animate-pulse"/>
           <span className="text-xs" style={{color:"#10B981",fontFamily:"JetBrains Mono, monospace"}}>18 portals monitored</span>
         </div>
@@ -998,17 +987,17 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
       className="absolute bottom-4 right-4 w-56 z-40" style={PANEL_STYLE}>
       <PanelTitle>Compliance Status</PanelTitle>
       <div className="p-3 space-y-2">
-        <StatRow label="Active Simulations" value="2 running" color="#22D3EE" dot="#22D3EE"/>
+        <StatRow label="Active Simulations" value="2 running" color="#1D4ED8" dot="#1D4ED8"/>
         <StatRow label="Regulatory Conflicts" value={stats.conflicts} color={stats.conflicts>2?"#EF4444":"#F59E0B"} dot={stats.conflicts>0?"#EF4444":undefined}/>
         <StatRow label="Precedent Matches" value={stats.precedents} color="#8B5CF6"/>
-        <div className="pt-2 border-t space-y-1.5" style={{borderColor:"rgba(255,255,255,0.06)"}}>
+        <div className="pt-2 border-t space-y-1.5" style={{borderColor:"rgba(0,0,0,0.06)"}}>
           {[{country:"PH Philippines",score:87,c:"#3B82F6"},{country:"SG Singapore",score:94,c:"#10B981"},{country:"VN Vietnam",score:71,c:"#EF4444"}].map(r=>(
             <div key={r.country}>
               <div className="flex justify-between mb-0.5">
                 <span className="text-xs" style={{color:"#64748B"}}>{r.country}</span>
                 <span className="text-xs" style={{color:r.c,fontFamily:"JetBrains Mono, monospace"}}>{r.score}%</span>
               </div>
-              <div className="h-0.5 rounded-full overflow-hidden" style={{background:"rgba(255,255,255,0.05)"}}>
+              <div className="h-0.5 rounded-full overflow-hidden" style={{background:"rgba(0,0,0,0.07)"}}>
                 <div className="h-full rounded-full" style={{width:`${r.score}%`,background:r.c}}/>
               </div>
             </div>
@@ -1033,10 +1022,10 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
     <motion.div initial={{x:side==="right"?"100%":"-100%",opacity:0}} animate={{x:0,opacity:1}} exit={{x:side==="right"?"100%":"-100%",opacity:0}}
       transition={{type:"spring",damping:28,stiffness:220}}
       className={`absolute ${side==="right"?"right-0 border-l":"left-0 border-r"} top-0 bottom-0 w-80 z-50 overflow-y-auto flex flex-col`}
-      style={{background:"rgba(9,15,24,0.97)",backdropFilter:"blur(24px)",borderColor:"rgba(255,255,255,0.08)",boxShadow:side==="right"?"-8px 0 40px rgba(0,0,0,0.6)":"8px 0 40px rgba(0,0,0,0.6)"}}>
+      style={{background:"rgba(255,255,255,0.97)",backdropFilter:"blur(24px)",borderColor:"rgba(0,0,0,0.08)",boxShadow:side==="right"?"-4px 0 24px rgba(0,0,0,0.08)":"4px 0 24px rgba(0,0,0,0.08)"}}>
 
       <div className="sticky top-0 z-10 flex items-start justify-between p-4 border-b"
-        style={{borderColor:"rgba(255,255,255,0.07)",background:"rgba(9,15,24,0.99)"}}>
+        style={{borderColor:"rgba(0,0,0,0.07)",background:"rgba(255,255,255,0.99)"}}>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1.5">
             {node.flag&&<span className="text-xl">{node.flag}</span>}
@@ -1044,24 +1033,24 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
               style={{background:h2r(node.glowColor,0.14),color:node.glowColor,fontFamily:"IBM Plex Sans, sans-serif"}}>{node.type}</span>
             {node.alerting&&<span className="text-xs px-1.5 py-0.5 rounded animate-pulse" style={{background:"rgba(239,68,68,0.14)",color:"#EF4444"}}>ALERT</span>}
           </div>
-          <h3 className="font-semibold text-sm leading-snug" style={{color:"#F5F7FA",fontFamily:"Inter, sans-serif"}}>{node.label}</h3>
+          <h3 className="font-semibold text-sm leading-snug" style={{color:"#0F172A",fontFamily:"Inter, sans-serif"}}>{node.label}</h3>
           {cd&&!isC&&<p className="text-xs mt-0.5" style={{color:"#64748B"}}>{cd.flag} {cd.name}</p>}
         </div>
         <button onClick={onClose} className="p-1.5 rounded-md ml-2 transition-colors"
-          style={{color:"#64748B"}} onMouseEnter={e=>(e.currentTarget.style.color="#F5F7FA")} onMouseLeave={e=>(e.currentTarget.style.color="#64748B")}>
+          style={{color:"#64748B"}} onMouseEnter={e=>(e.currentTarget.style.color="#0F172A")} onMouseLeave={e=>(e.currentTarget.style.color="#64748B")}>
           <X size={15}/>
         </button>
       </div>
 
       <div className="p-4 space-y-4 flex-1">
-        <p className="text-xs leading-relaxed" style={{color:"#94A3B8"}}>{details.description}</p>
+        <p className="text-xs leading-relaxed" style={{color:"#475569"}}>{details.description}</p>
 
         <div className="grid grid-cols-2 gap-2">
           {[{l:"Category",v:details.category},{l:"Status",v:details.status,c:details.status==="Active"?"#10B981":details.status==="Proposed"?"#F59E0B":"#EF4444"},{l:"Enacted",v:details.enacted},{l:"Coverage",v:details.coverage}]
             .filter(m=>m.v&&m.v!=="N/A").map(m=>(
-            <div key={m.l} className="rounded-lg p-2.5" style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)"}}>
+            <div key={m.l} className="rounded-lg p-2.5" style={{background:"rgba(0,0,0,0.02)",border:"1px solid rgba(0,0,0,0.07)"}}>
               <div className="text-xs mb-0.5" style={{color:"#64748B"}}>{m.l}</div>
-              <div className="text-xs font-medium truncate" style={{color:(m as any).c||"#F5F7FA",fontFamily:"JetBrains Mono, monospace"}}>{m.v}</div>
+              <div className="text-xs font-medium truncate" style={{color:(m as any).c||"#0F172A",fontFamily:"JetBrains Mono, monospace"}}>{m.v}</div>
             </div>
           ))}
         </div>
@@ -1093,9 +1082,9 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
             <div className="space-y-1.5">
               <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>Tracked Regulations</p>
               {ci.regulations.map(r=>(
-                <div key={r.id} className="flex items-center gap-2 px-2.5 py-2 rounded-lg" style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.05)"}}>
+                <div key={r.id} className="flex items-center gap-2 px-2.5 py-2 rounded-lg" style={{background:"rgba(0,0,0,0.025)",border:"1px solid rgba(0,0,0,0.06)"}}>
                   <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{background:node.glowColor}}/>
-                  <span className="text-xs flex-1 truncate" style={{color:"#94A3B8"}}>{r.label}</span>
+                  <span className="text-xs flex-1 truncate" style={{color:"#374151"}}>{r.label}</span>
                   <span className="text-xs shrink-0" style={{color:"#64748B",fontFamily:"JetBrains Mono, monospace"}}>{r.clauses}§</span>
                 </div>
               ))}
@@ -1108,7 +1097,7 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
             <span className="text-xs font-semibold uppercase tracking-widest" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>AI Confidence</span>
             <span className="text-xs font-bold" style={{color:confC,fontFamily:"JetBrains Mono, monospace"}}>{(conf*100).toFixed(1)}%</span>
           </div>
-          <div className="h-1.5 rounded-full overflow-hidden" style={{background:"rgba(255,255,255,0.06)"}}>
+          <div className="h-1.5 rounded-full overflow-hidden" style={{background:"rgba(0,0,0,0.07)"}}>
             <motion.div initial={{width:0}} animate={{width:`${conf*100}%`}} transition={{duration:0.9,delay:0.2}}
               className="h-full rounded-full" style={{background:`linear-gradient(90deg,${confC}70,${confC})`}}/>
           </div>
@@ -1117,14 +1106,14 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
         {!isC&&(
           <div className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>AI Reasoning Trace</p>
-            <div className="rounded-lg p-3 space-y-2.5" style={{background:"rgba(139,92,246,0.06)",border:"1px solid rgba(139,92,246,0.18)"}}>
+            <div className="rounded-lg p-3 space-y-2.5" style={{background:"rgba(139,92,246,0.04)",border:"1px solid rgba(139,92,246,0.14)"}}>
               {["Extracted from official government PDF portal","Semantic classification via RDTII taxonomy","Cross-referenced with regional precedent database","Compliance vector encoded to persistent memory","Citation graph updated — 3 new edges added"].map((s,i)=>(
                 <div key={i} className="flex items-start gap-2">
                   <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-                    style={{background:"rgba(139,92,246,0.25)",border:"1px solid rgba(139,92,246,0.4)"}}>
-                    <span style={{color:"#8B5CF6",fontSize:"8px",fontWeight:700}}>{i+1}</span>
+                    style={{background:"rgba(139,92,246,0.15)",border:"1px solid rgba(139,92,246,0.3)"}}>
+                    <span style={{color:"#7C3AED",fontSize:"8px",fontWeight:700}}>{i+1}</span>
                   </div>
-                  <span className="text-xs leading-snug" style={{color:"#94A3B8"}}>{s}</span>
+                  <span className="text-xs leading-snug" style={{color:"#475569"}}>{s}</span>
                 </div>
               ))}
             </div>
@@ -1141,7 +1130,7 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
                   {i<Math.min(details.amendments,3)-1&&<div className="w-px flex-1 mt-1" style={{background:"rgba(245,158,11,0.25)",minHeight:"14px"}}/>}
                 </div>
                 <div>
-                  <div className="text-xs font-medium" style={{color:"#F5F7FA",fontFamily:"JetBrains Mono, monospace"}}>{parseInt(details.enacted)+i+1}</div>
+                  <div className="text-xs font-medium" style={{color:"#0F172A",fontFamily:"JetBrains Mono, monospace"}}>{parseInt(details.enacted)+i+1}</div>
                   <div className="text-xs mt-0.5" style={{color:"#64748B"}}>{["Scope clarification and definitions update","Cross-border provision expansion","Enforcement mechanism revised","AI-specific obligations added"][i%4]}</div>
                 </div>
               </div>
@@ -1157,10 +1146,10 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
               if (!rel) return null;
               return (
                 <div key={k} className="flex items-center gap-2 px-2.5 py-2 rounded-lg"
-                  style={{background:"rgba(139,92,246,0.07)",border:"1px solid rgba(139,92,246,0.16)"}}>
+                  style={{background:"rgba(139,92,246,0.04)",border:"1px solid rgba(139,92,246,0.12)"}}>
                   <span className="text-base">{d.flag}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs truncate" style={{color:"#94A3B8"}}>{rel.label}</p>
+                    <p className="text-xs truncate" style={{color:"#374151"}}>{rel.label}</p>
                     <p className="text-xs" style={{color:"#64748B"}}>{d.name}</p>
                   </div>
                   <Link size={10} style={{color:"#8B5CF6"}}/>
@@ -1304,7 +1293,7 @@ function DiffEngine() {
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-2">
           <GitBranch size={18} style={{color:"#8B5CF6"}}/>
-          <h1 className="text-xl font-semibold" style={{color:"#F5F7FA",fontFamily:"Inter, sans-serif"}}>Country Comparison — Cross-Border Transfer</h1>
+          <h1 className="text-xl font-semibold" style={{color:"#0F172A",fontFamily:"Inter, sans-serif"}}>Country Comparison — Cross-Border Transfer</h1>
           <span className="text-xs px-2 py-0.5 rounded" style={{background:"rgba(139,92,246,0.14)",color:"#8B5CF6",border:"1px solid rgba(139,92,246,0.3)"}}>ESCAP Analyst Mode</span>
         </div>
         <p className="text-sm" style={{color:"#64748B"}}>
@@ -1312,13 +1301,13 @@ function DiffEngine() {
         </p>
       </div>
 
-      <div className="rounded-xl p-4 mb-5" style={{background:"rgba(13,23,34,0.7)",border:"1px solid rgba(255,255,255,0.08)"}}>
+      <div className="rounded-xl p-4 mb-5" style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.08)"}}>
         <div className="flex items-center gap-3">
           <input value={query} onChange={e=>setQuery(e.target.value)}
             onKeyDown={e=>e.key==="Enter"&&runQuery()}
             className="flex-1 rounded-lg px-4 py-3 text-sm outline-none"
             placeholder="Ask: Compare cross-border transfer rules across ASEAN..."
-            style={{background:"rgba(17,28,41,0.9)",border:"1px solid rgba(255,255,255,0.1)",color:"#F5F7FA"}}/>
+            style={{background:"#F8FAFC",border:"1px solid rgba(0,0,0,0.1)",color:"#0F172A"}}/>
           <button onClick={runQuery} disabled={running}
             className="px-4 py-3 rounded-lg text-sm font-medium transition-all"
             style={{background:running?"rgba(59,130,246,0.15)":"rgba(59,130,246,0.9)",border:"1px solid rgba(59,130,246,0.5)",color:running?"#60A5FA":"#fff"}}>
@@ -1328,7 +1317,7 @@ function DiffEngine() {
             onClick={()=>downloadTextFile("asean-cross-border-transfer-brief.md", buildBriefMarkdown(query, selected))}
             disabled={!ready}
             className="px-4 py-3 rounded-lg text-sm font-medium transition-all"
-            style={{background:ready?"rgba(16,185,129,0.14)":"rgba(255,255,255,0.06)",border:`1px solid ${ready?"rgba(16,185,129,0.35)":"rgba(255,255,255,0.1)"}`,color:ready?"#6EE7B7":"#64748B"}}>
+            style={{background:ready?"rgba(16,185,129,0.1)":"rgba(0,0,0,0.03)",border:`1px solid ${ready?"rgba(16,185,129,0.35)":"rgba(0,0,0,0.1)"}`,color:ready?"#059669":"#64748B"}}>
             Download brief
           </button>
         </div>
@@ -1340,7 +1329,7 @@ function DiffEngine() {
             return (
               <button key={k} onClick={()=>toggle(k)}
                 className="text-xs px-3 py-1.5 rounded-full transition-colors"
-                style={{background:on?"rgba(139,92,246,0.18)":"rgba(255,255,255,0.06)",border:`1px solid ${on?"rgba(139,92,246,0.32)":"rgba(255,255,255,0.1)"}`,color:on?"#C4B5FD":"#94A3B8"}}>
+                style={{background:on?"rgba(59,130,246,0.1)":"rgba(0,0,0,0.04)",border:`1px solid ${on?"rgba(59,130,246,0.3)":"rgba(0,0,0,0.1)"}`,color:on?"#1D4ED8":"#374151"}}>
                 {c.flag} {c.name}
               </button>
             );
@@ -1356,14 +1345,14 @@ function DiffEngine() {
       </div>
 
       {!ready ? (
-        <div className="rounded-xl p-6 text-sm" style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",color:"#64748B"}}>
+        <div className="rounded-xl p-6 text-sm" style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.07)",color:"#64748B"}}>
           Run a query to generate the ASEAN comparison dashboard.
         </div>
       ) : (
         <>
           <div className="grid grid-cols-6 gap-2 mb-5">
             {["Low","Medium","High"].map((f,i)=>(
-              <div key={f} className="col-span-2 rounded-xl p-3" style={{background:"rgba(13,23,34,0.6)",border:"1px solid rgba(255,255,255,0.08)"}}>
+              <div key={f} className="col-span-2 rounded-xl p-3" style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.08)"}}>
                 <div className="text-xs" style={{color:"#64748B"}}>Friction</div>
                 <div className="text-lg font-bold" style={{color:f==="Low"?"#10B981":f==="Medium"?"#F59E0B":"#EF4444",fontFamily:"JetBrains Mono, monospace"}}>{f}</div>
                 <div className="text-xs mt-1" style={{color:"#94A3B8"}}>
@@ -1373,13 +1362,13 @@ function DiffEngine() {
             ))}
           </div>
 
-          <div className="rounded-xl overflow-hidden" style={{background:"rgba(13,23,34,0.6)",border:"1px solid rgba(255,255,255,0.08)"}}>
-            <div className="px-4 py-3 border-b flex items-center justify-between" style={{borderColor:"rgba(255,255,255,0.06)"}}>
+          <div className="rounded-xl overflow-hidden" style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.08)"}}>
+            <div className="px-4 py-3 border-b flex items-center justify-between" style={{borderColor:"rgba(0,0,0,0.06)"}}>
               <div>
-                <p className="text-sm font-medium" style={{color:"#F5F7FA"}}>ASEAN cross-border transfer comparison</p>
+                <p className="text-sm font-medium" style={{color:"#0F172A"}}>ASEAN cross-border transfer comparison</p>
                 <p className="text-xs" style={{color:"#64748B",fontFamily:"JetBrains Mono, monospace"}}>{query}</p>
               </div>
-              <span className="text-xs px-2 py-1 rounded" style={{background:"rgba(34,211,238,0.12)",color:"#22D3EE",border:"1px solid rgba(34,211,238,0.25)"}}>
+              <span className="text-xs px-2 py-1 rounded" style={{background:"rgba(59,130,246,0.1)",color:"#1D4ED8",border:"1px solid rgba(59,130,246,0.25)"}}>
                 {rows.length} selected
               </span>
             </div>
@@ -1388,12 +1377,12 @@ function DiffEngine() {
               {rows.map(r=>{
                 const fc=frictionColor(r.friction);
                 return (
-                  <div key={r.key} className="col-span-3 border-r last:border-r-0" style={{borderColor:"rgba(255,255,255,0.06)"}}>
+                  <div key={r.key} className="col-span-3 border-r last:border-r-0" style={{borderColor:"rgba(0,0,0,0.07)"}}>
                     <div className="p-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <span className="text-lg">{r.flag}</span>
-                          <span className="text-sm font-semibold" style={{color:"#F5F7FA"}}>{r.name}</span>
+                          <span className="text-sm font-semibold" style={{color:"#0F172A"}}>{r.name}</span>
                         </div>
                         <span className="text-xs px-2 py-1 rounded" style={{background:`${fc}22`,border:`1px solid ${fc}44`,color:fc,fontFamily:"JetBrains Mono, monospace"}}>
                           {r.friction}
@@ -1405,7 +1394,7 @@ function DiffEngine() {
                         <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>Typical conditions</p>
                         <div className="mt-2 space-y-1.5">
                           {r.conditions.map((c,i)=>(
-                            <div key={i} className="text-xs px-2.5 py-2 rounded-lg" style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",color:"#94A3B8"}}>
+                            <div key={i} className="text-xs px-2.5 py-2 rounded-lg" style={{background:"#F8FAFC",border:"1px solid rgba(0,0,0,0.07)",color:"#374151"}}>
                               {c}
                             </div>
                           ))}
@@ -1416,7 +1405,7 @@ function DiffEngine() {
                         <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>Citations</p>
                         <div className="mt-2 space-y-1.5">
                           {r.citations.map((c,i)=>(
-                            <div key={i} className="text-xs px-2.5 py-2 rounded-lg" style={{background:"rgba(139,92,246,0.06)",border:"1px solid rgba(139,92,246,0.15)",color:"#C4B5FD"}}>
+                            <div key={i} className="text-xs px-2.5 py-2 rounded-lg" style={{background:"rgba(139,92,246,0.06)",border:"1px solid rgba(139,92,246,0.15)",color:"#6D28D9"}}>
                               <span style={{fontFamily:"JetBrains Mono, monospace"}}>{c.instrument}</span>
                               <span style={{color:"#64748B"}}> — {c.section}</span>
                               {c.note&&<span style={{color:"#94A3B8"}}> · {c.note}</span>}
@@ -1431,12 +1420,12 @@ function DiffEngine() {
             </div>
           </div>
 
-          <div className="rounded-xl p-4 mt-5" style={{background:"rgba(139,92,246,0.06)",border:"1px solid rgba(139,92,246,0.2)"}}>
+          <div className="rounded-xl p-4 mt-5" style={{background:"rgba(139,92,246,0.04)",border:"1px solid rgba(139,92,246,0.15)"}}>
             <div className="flex items-center gap-2 mb-3">
               <Brain size={14} style={{color:"#8B5CF6"}}/>
               <span className="text-xs font-semibold uppercase tracking-widest" style={{color:"#8B5CF6",fontFamily:"IBM Plex Sans, sans-serif"}}>Automated analyst brief</span>
             </div>
-            <p className="text-sm leading-relaxed" style={{color:"#94A3B8"}}>
+            <p className="text-sm leading-relaxed" style={{color:"#475569"}}>
               This dashboard compresses what used to take weeks of manual legal review: collecting cross-border transfer clauses, normalizing them into comparable conditions, and producing a citation-ready brief for policy work.
             </p>
           </div>
@@ -1451,10 +1440,10 @@ function SimulationSandbox() {
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
       <div className="mb-6 flex items-center gap-3">
-        <FlaskConical size={18} style={{color:"#22D3EE"}}/>
-        <h1 className="text-xl font-semibold" style={{color:"#F5F7FA"}}>Compliance Simulation Sandbox</h1>
+        <FlaskConical size={18} style={{color:"#1D4ED8"}}/>
+        <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Compliance Simulation Sandbox</h1>
       </div>
-      <div className="rounded-xl p-4" style={{background:"rgba(13,23,34,0.7)",border:"1px solid rgba(255,255,255,0.08)"}}>
+      <div className="rounded-xl p-4" style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.08)"}}>
         <p className="text-sm" style={{color:"#64748B"}}>
           Simulation view placeholder.
         </p>
@@ -1535,7 +1524,7 @@ function SMEAssistant() {
     <div className="max-w-4xl mx-auto px-6 py-8 flex flex-col h-full" style={{height:"calc(100vh - 80px)"}}>
       <div className="flex items-center gap-3 mb-4">
         <MessageSquare size={18} style={{color:"#3B82F6"}}/>
-        <h1 className="text-xl font-semibold" style={{color:"#F5F7FA"}}>SME Assistant</h1>
+        <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>SME Assistant</h1>
         <div className="ml-auto flex items-center gap-2 text-xs px-2.5 py-1 rounded-full"
           style={{background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.2)",color:"#10B981"}}>
           <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"/>Compliance Score: 87%
@@ -1546,7 +1535,7 @@ function SMEAssistant() {
         {["What data can I collect?","Cross-border transfer rules","Fintech licensing in SG","AI regulation requirements"].map(q=>(
           <button key={q} onClick={()=>setInput(q)}
             className="text-xs px-3 py-1.5 rounded-full transition-colors"
-            style={{background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.2)",color:"#60A5FA"}}>
+            style={{background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.2)",color:"#1D4ED8"}}>
             {q}
           </button>
         ))}
@@ -1562,7 +1551,7 @@ function SMEAssistant() {
               </div>
             )}
             <div className={`max-w-lg rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line ${m.role==="user"?"rounded-tr-sm":"rounded-tl-sm"}`}
-              style={{background:m.role==="user"?"rgba(59,130,246,0.14)":"rgba(17,28,41,0.9)",border:`1px solid ${m.role==="user"?"rgba(59,130,246,0.25)":"rgba(255,255,255,0.06)"}`,color:"#E2E8F0"}}>
+              style={{background:m.role==="user"?"rgba(30,64,175,0.08)":"#ffffff",border:`1px solid ${m.role==="user"?"rgba(30,64,175,0.18)":"rgba(0,0,0,0.07)"}`,color:"#1E293B"}}>
               {m.text}
             </div>
           </div>
@@ -1574,7 +1563,7 @@ function SMEAssistant() {
         <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()}
           placeholder="Ask about regulatory requirements, compliance, or specific laws..."
           className="flex-1 rounded-xl px-4 py-3 text-sm outline-none transition-colors"
-          style={{background:"rgba(17,28,41,0.9)",border:"1px solid rgba(255,255,255,0.1)",color:"#F5F7FA",fontFamily:"Inter, sans-serif"}}/>
+          style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.1)",color:"#0F172A",fontFamily:"Inter, sans-serif"}}/>
         <button onClick={send}
           className="px-4 py-3 rounded-xl flex items-center justify-center transition-all"
           style={{background:"rgba(59,130,246,0.85)",border:"1px solid rgba(59,130,246,0.5)"}}>
@@ -1590,8 +1579,8 @@ function CountriesView() {
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
       <div className="flex items-center gap-3 mb-6">
-        <Globe size={18} style={{color:"#22D3EE"}}/>
-        <h1 className="text-xl font-semibold" style={{color:"#F5F7FA"}}>Jurisdiction Overview</h1>
+        <Globe size={18} style={{color:"#1D4ED8"}}/>
+        <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Jurisdiction Overview</h1>
       </div>
       <div className="grid grid-cols-3 gap-4">
         {Object.entries(COUNTRY_DATA).map(([key,data])=>{
@@ -1599,11 +1588,11 @@ function CountriesView() {
           const amends=data.regulations.reduce((a,r)=>a+r.amendments,0);
           return (
             <div key={key} className="rounded-xl p-4 transition-all"
-              style={{background:"rgba(13,23,34,0.7)",border:`1px solid rgba(255,255,255,0.08)`,cursor:"pointer"}}>
+              style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.08)",cursor:"pointer"}}>
               <div className="flex items-center gap-3 mb-3">
                 <span className="text-3xl">{data.flag}</span>
                 <div>
-                  <h3 className="font-semibold text-sm" style={{color:"#F5F7FA"}}>{data.name}</h3>
+                  <h3 className="font-semibold text-sm" style={{color:"#0F172A"}}>{data.name}</h3>
                   <p className="text-xs" style={{color:"#64748B"}}>{data.regulations.length} regulations tracked</p>
                 </div>
                 <div className="ml-auto text-right">
@@ -1611,7 +1600,7 @@ function CountriesView() {
                   <div className="text-xs" style={{color:"#64748B"}}>compliance</div>
                 </div>
               </div>
-              <div className="h-1 rounded-full overflow-hidden mb-3" style={{background:"rgba(255,255,255,0.06)"}}>
+              <div className="h-1 rounded-full overflow-hidden mb-3" style={{background:"rgba(0,0,0,0.07)"}}>
                 <div className="h-full rounded-full" style={{width:`${score}%`,background:data.color}}/>
               </div>
               <div className="grid grid-cols-3 gap-2">
@@ -1646,7 +1635,7 @@ function MemoryLayer() {
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <Database size={18} style={{color:"#8B5CF6"}}/>
-          <h1 className="text-xl font-semibold" style={{color:"#F5F7FA"}}>Regulatory Memory Layer</h1>
+          <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Regulatory Memory Layer</h1>
         </div>
         <div className="flex gap-3 text-xs">
           {[{l:"Total Documents",v:"2,847"},{l:"Memory Size",v:"142.7 GB"},{l:"Retrieval Speed",v:"84ms avg"}].map(s=>(
@@ -1661,16 +1650,16 @@ function MemoryLayer() {
         {events.map((e,i)=>(
           <motion.div key={i} initial={{opacity:0,x:-16}} animate={{opacity:1,x:0}} transition={{delay:i*0.05}}
             className="flex items-center gap-4 px-4 py-3 rounded-xl transition-all"
-            style={{background:"rgba(13,23,34,0.6)",border:"1px solid rgba(255,255,255,0.07)",cursor:"pointer"}}>
+            style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.07)",cursor:"pointer"}}>
             <div className="flex items-center gap-2 w-8">
               <div className="w-2 h-2 rounded-full shrink-0" style={{background:e.c}}/>
             </div>
             <span className="text-xl">{e.flag}</span>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate" style={{color:"#F5F7FA"}}>{e.label}</p>
+              <p className="text-sm font-medium truncate" style={{color:"#0F172A"}}>{e.label}</p>
               <p className="text-xs" style={{color:"#64748B"}}>{e.cat} · Ingested {e.date}</p>
             </div>
-            <span className="text-xs px-2 py-0.5 rounded shrink-0" style={{background:"rgba(255,255,255,0.04)",color:"#64748B",fontFamily:"JetBrains Mono, monospace"}}>{e.size}</span>
+            <span className="text-xs px-2 py-0.5 rounded shrink-0" style={{background:"#F1F5F9",color:"#64748B",fontFamily:"JetBrains Mono, monospace"}}>{e.size}</span>
             <ChevronRight size={14} style={{color:"#64748B"}}/>
           </motion.div>
         ))}
@@ -1694,15 +1683,15 @@ function APIView() {
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
       <div className="flex items-center gap-3 mb-6">
-        <Code2 size={18} style={{color:"#22D3EE"}}/>
-        <h1 className="text-xl font-semibold" style={{color:"#F5F7FA"}}>API Reference</h1>
-        <span className="text-xs px-2 py-0.5 rounded" style={{background:"rgba(34,211,238,0.1)",color:"#22D3EE",border:"1px solid rgba(34,211,238,0.25)"}}>v1.4.2</span>
+        <Code2 size={18} style={{color:"#1D4ED8"}}/>
+        <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>API Reference</h1>
+        <span className="text-xs px-2 py-0.5 rounded" style={{background:"rgba(59,130,246,0.1)",color:"#1D4ED8",border:"1px solid rgba(59,130,246,0.25)"}}>v1.4.2</span>
       </div>
 
-      <div className="rounded-xl mb-4 p-4" style={{background:"rgba(13,23,34,0.7)",border:"1px solid rgba(255,255,255,0.08)"}}>
+      <div className="rounded-xl mb-4 p-4" style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.08)"}}>
         <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>Authentication</p>
-        <div className="rounded-lg px-3 py-2" style={{background:"rgba(0,0,0,0.3)",border:"1px solid rgba(255,255,255,0.06)"}}>
-          <code className="text-xs" style={{color:"#22D3EE",fontFamily:"JetBrains Mono, monospace"}}>
+        <div className="rounded-lg px-3 py-2" style={{background:"#F8FAFC",border:"1px solid rgba(0,0,0,0.08)"}}>
+          <code className="text-xs" style={{color:"#0891B2",fontFamily:"JetBrains Mono, monospace"}}>
             Authorization: Bearer {"<YOUR_AILA_API_KEY>"}
           </code>
         </div>
@@ -1711,15 +1700,15 @@ function APIView() {
       <div className="space-y-2">
         {endpoints.map((e,i)=>(
           <div key={i} className="flex items-start gap-3 px-4 py-3 rounded-xl"
-            style={{background:"rgba(13,23,34,0.6)",border:"1px solid rgba(255,255,255,0.07)"}}>
-            <span className="text-xs font-bold w-12 shrink-0 mt-0.5" style={{color:mc[e.method]||"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{e.method}</span>
-            <code className="text-xs shrink-0 w-52" style={{color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{e.path}</code>
+            style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.07)"}}>
+            <span className="text-xs font-bold w-12 shrink-0 mt-0.5" style={{color:mc[e.method]||"#374151",fontFamily:"JetBrains Mono, monospace"}}>{e.method}</span>
+            <code className="text-xs shrink-0 w-52" style={{color:"#374151",fontFamily:"JetBrains Mono, monospace"}}>{e.path}</code>
             <span className="text-xs" style={{color:"#64748B"}}>{e.desc}</span>
           </div>
         ))}
       </div>
 
-      <div className="mt-6 rounded-xl p-4" style={{background:"rgba(13,23,34,0.7)",border:"1px solid rgba(255,255,255,0.08)"}}>
+      <div className="mt-6 rounded-xl p-4" style={{background:"#F8FAFC",border:"1px solid rgba(0,0,0,0.08)"}}>
         <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>Example Request</p>
         <pre className="text-xs leading-relaxed overflow-x-auto" style={{color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>
 {`curl -X POST https://api.aila.legal/v1/simulate \\
@@ -1746,30 +1735,30 @@ function SettingsView() {
     <div className="max-w-3xl mx-auto px-6 py-8">
       <div className="flex items-center gap-3 mb-6">
         <Settings size={18} style={{color:"#64748B"}}/>
-        <h1 className="text-xl font-semibold" style={{color:"#F5F7FA"}}>System Configuration</h1>
+        <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>System Configuration</h1>
       </div>
       <div className="space-y-4">
         {[
           {title:"AI Engine",items:[
-            {l:"Model",v:<select value={vals.aiModel} onChange={e=>setVals(v=>({...v,aiModel:e.target.value}))} className="rounded px-2 py-1 text-xs outline-none" style={{background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",color:"#94A3B8"}}><option value="claude-sonnet-4-6">Claude Sonnet 4.6</option><option value="claude-opus-4-7">Claude Opus 4.7</option></select>},
-            {l:"Semantic Diff Engine",v:<button onClick={()=>toggle("semanticDiff")} className="w-9 h-5 rounded-full transition-colors relative" style={{background:vals.semanticDiff?"#3B82F6":"rgba(255,255,255,0.1)"}}><span className="absolute top-0.5 w-4 h-4 rounded-full transition-all" style={{background:"#fff",left:vals.semanticDiff?"calc(100% - 18px)":"2px"}}/></button>},
+            {l:"Model",v:<select value={vals.aiModel} onChange={e=>setVals(v=>({...v,aiModel:e.target.value}))} className="rounded px-2 py-1 text-xs outline-none" style={{background:"#F8FAFC",border:"1px solid rgba(0,0,0,0.1)",color:"#374151"}}><option value="claude-sonnet-4-6">Claude Sonnet 4.6</option><option value="claude-opus-4-7">Claude Opus 4.7</option></select>},
+            {l:"Semantic Diff Engine",v:<button onClick={()=>toggle("semanticDiff")} className="w-9 h-5 rounded-full transition-colors relative" style={{background:vals.semanticDiff?"#1D4ED8":"#E2E8F0"}}><span className="absolute top-0.5 w-4 h-4 rounded-full transition-all" style={{background:"#fff",left:vals.semanticDiff?"calc(100% - 18px)":"2px"}}/></button>},
           ]},
           {title:"Crawler Settings",items:[
-            {l:"Crawl Interval",v:<select value={vals.crawlInterval} onChange={e=>setVals(v=>({...v,crawlInterval:e.target.value}))} className="rounded px-2 py-1 text-xs outline-none" style={{background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",color:"#94A3B8"}}><option value="1h">Every 1 hour</option><option value="6h">Every 6 hours</option><option value="24h">Daily</option></select>},
-            {l:"Auto Memory Growth",v:<button onClick={()=>toggle("memoryAuto")} className="w-9 h-5 rounded-full transition-colors relative" style={{background:vals.memoryAuto?"#3B82F6":"rgba(255,255,255,0.1)"}}><span className="absolute top-0.5 w-4 h-4 rounded-full transition-all" style={{background:"#fff",left:vals.memoryAuto?"calc(100% - 18px)":"2px"}}/></button>},
+            {l:"Crawl Interval",v:<select value={vals.crawlInterval} onChange={e=>setVals(v=>({...v,crawlInterval:e.target.value}))} className="rounded px-2 py-1 text-xs outline-none" style={{background:"#F8FAFC",border:"1px solid rgba(0,0,0,0.1)",color:"#374151"}}><option value="1h">Every 1 hour</option><option value="6h">Every 6 hours</option><option value="24h">Daily</option></select>},
+            {l:"Auto Memory Growth",v:<button onClick={()=>toggle("memoryAuto")} className="w-9 h-5 rounded-full transition-colors relative" style={{background:vals.memoryAuto?"#1D4ED8":"#E2E8F0"}}><span className="absolute top-0.5 w-4 h-4 rounded-full transition-all" style={{background:"#fff",left:vals.memoryAuto?"calc(100% - 18px)":"2px"}}/></button>},
           ]},
           {title:"Notifications",items:[
-            {l:"Amendment Alerts",v:<button onClick={()=>toggle("notifications")} className="w-9 h-5 rounded-full transition-colors relative" style={{background:vals.notifications?"#3B82F6":"rgba(255,255,255,0.1)"}}><span className="absolute top-0.5 w-4 h-4 rounded-full transition-all" style={{background:"#fff",left:vals.notifications?"calc(100% - 18px)":"2px"}}/></button>},
+            {l:"Amendment Alerts",v:<button onClick={()=>toggle("notifications")} className="w-9 h-5 rounded-full transition-colors relative" style={{background:vals.notifications?"#1D4ED8":"#E2E8F0"}}><span className="absolute top-0.5 w-4 h-4 rounded-full transition-all" style={{background:"#fff",left:vals.notifications?"calc(100% - 18px)":"2px"}}/></button>},
           ]},
         ].map(section=>(
-          <div key={section.title} className="rounded-xl overflow-hidden" style={{background:"rgba(13,23,34,0.7)",border:"1px solid rgba(255,255,255,0.08)"}}>
-            <div className="px-4 py-2.5 border-b" style={{borderColor:"rgba(255,255,255,0.06)"}}>
+          <div key={section.title} className="rounded-xl overflow-hidden" style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.08)"}}>
+            <div className="px-4 py-2.5 border-b" style={{borderColor:"rgba(0,0,0,0.06)"}}>
               <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>{section.title}</p>
             </div>
             {section.items.map(item=>(
               <div key={item.l} className="flex items-center justify-between px-4 py-3 border-b last:border-0"
-                style={{borderColor:"rgba(255,255,255,0.04)"}}>
-                <span className="text-sm" style={{color:"#94A3B8"}}>{item.l}</span>
+                style={{borderColor:"rgba(0,0,0,0.05)"}}>
+                <span className="text-sm" style={{color:"#374151"}}>{item.l}</span>
                 {item.v}
               </div>
             ))}
@@ -1785,275 +1774,25 @@ export default function App() {
   const [view,setView]=useState<ViewId>("dashboard");
   const [selNode,setSelNode]=useState<GNode|null>(null);
   const isDash=view==="dashboard"||view==="graph";
-  const [simulateAction,setSimulateAction]=useState<SimulateAction>({ tick: 0, step: "crawler" });
-  const [simulatedEvent,setSimulatedEvent]=useState<LiveEvent|null>(null);
-  const [showStoryNotice,setShowStoryNotice]=useState(false);
-  const [storyStep,setStoryStep]=useState<DemoStep>("crawler");
-
-  const [compareMode,setCompareMode]=useState(false);
-  const [compareLeft,setCompareLeft]=useState<GNode|null>(null);
-  const [compareRight,setCompareRight]=useState<GNode|null>(null);
 
   const onNav=(v:ViewId)=>{
     setView(v);
     if (v==="dashboard"||v==="graph") setSelNode(null);
-    // Leaving the graph/dashboard ends compare mode.
-    if (v!=="dashboard" && v!=="graph") {
-      setCompareMode(false);
-      setCompareLeft(null);
-      setCompareRight(null);
-    }
   };
 
   const onGraphSelect=(n:GNode|null)=>{
     if (!isDash) return;
-
-    if (!compareMode) {
-      setSelNode(n);
-      return;
-    }
-
-    // Compare mode behavior:
-    // 1) First selection pins left.
-    // 2) Next selections go to right (replacing previous right).
-    // 3) If user closes (unselects) left, comparisons stop; user must toggle compare mode again to start a new comparison.
-    if (!n) return;
-
-    if (!compareLeft) {
-      setCompareLeft(n);
-      setCompareRight(null);
-      setSelNode(null);
-      return;
-    }
-
-    // If clicking the left node again, treat as unselect (stop comparing).
-    if (compareLeft.id===n.id) return;
-
-    setCompareRight(n);
-    setSelNode(null);
-  };
-
-  const stopCompare=()=>{
-    setCompareMode(false);
-    setCompareLeft(null);
-    setCompareRight(null);
-  };
-
-  const runStorySimulation = (step: DemoStep) => {
-    const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-    const eventMap: Record<DemoStep, LiveEvent> = {
-      crawler: { type: "ingest", text: "Crawler agent detected new publication + amendment update", time: now },
-      ocr: { type: "analysis", text: "OCR pipeline converted scanned PDF to clean structured text", time: now },
-      translation: { type: "verify", text: "Thai PDPA translated to English with legal glossary alignment", time: now },
-      versioning: { type: "diff", text: "Version chain updated: regulation now has 3 timestamped snapshots", time: now },
-    };
-    const event = eventMap[step];
-    setSimulatedEvent(event);
-    setSimulateAction(prev => ({ tick: prev.tick + 1, step }));
-    setStoryStep(step);
-    setShowStoryNotice(true);
-    window.setTimeout(() => setShowStoryNotice(false), 12000);
+    setSelNode(n);
   };
 
   return (
-    <div className="relative w-full h-screen overflow-hidden" style={{background:"#071018",fontFamily:"Inter, sans-serif"}}>
-      <RegulatoryGraph onSelect={onGraphSelect} selId={selNode?.id||null} dimmed={!isDash} simulateAction={simulateAction}/>
+    <div className="relative w-full h-screen overflow-hidden" style={{background:"#0f0f0f",fontFamily:"Inter, sans-serif"}}>
+      <RegulatoryGraph onSelect={onGraphSelect} selId={selNode?.id||null} dimmed={!isDash} simulateAction={{tick:0,step:"crawler"}}/>
 
-      <FloatingNav cur={view} onNav={onNav}/>
-
-      {isDash&&(
-        <div className="absolute top-[84px] left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 flex-wrap justify-center">
-          <button
-            onClick={()=>runStorySimulation("crawler")}
-            className="px-3 py-2 rounded-full text-xs font-medium transition-colors"
-            style={{
-              background: "rgba(34,211,238,0.15)",
-              border: "1px solid rgba(34,211,238,0.35)",
-              color: "#67E8F9",
-              backdropFilter: "blur(16px)",
-            }}>
-            Step 2: Crawler
-          </button>
-          <button
-            onClick={()=>runStorySimulation("ocr")}
-            className="px-3 py-2 rounded-full text-xs font-medium transition-colors"
-            style={{
-              background: "rgba(59,130,246,0.15)",
-              border: "1px solid rgba(59,130,246,0.35)",
-              color: "#93C5FD",
-              backdropFilter: "blur(16px)",
-            }}>
-            Step 3: OCR
-          </button>
-          <button
-            onClick={()=>runStorySimulation("translation")}
-            className="px-3 py-2 rounded-full text-xs font-medium transition-colors"
-            style={{
-              background: "rgba(139,92,246,0.15)",
-              border: "1px solid rgba(139,92,246,0.35)",
-              color: "#C4B5FD",
-              backdropFilter: "blur(16px)",
-            }}>
-            Step 4: Translation
-          </button>
-          <button
-            onClick={()=>runStorySimulation("versioning")}
-            className="px-3 py-2 rounded-full text-xs font-medium transition-colors"
-            style={{
-              background: "rgba(16,185,129,0.15)",
-              border: "1px solid rgba(16,185,129,0.35)",
-              color: "#6EE7B7",
-              backdropFilter: "blur(16px)",
-            }}>
-            Step 5: Versioning
-          </button>
-          <button
-            onClick={()=>{
-              // Turning on compare mode starts a fresh comparison.
-              if (!compareMode) {
-                setCompareMode(true);
-                setCompareLeft(null);
-                setCompareRight(null);
-                setSelNode(null);
-              } else {
-                stopCompare();
-              }
-            }}
-            className="px-3 py-2 rounded-full text-xs font-medium transition-colors"
-            style={{
-              background: compareMode ? "rgba(139,92,246,0.2)" : "rgba(255,255,255,0.06)",
-              border: `1px solid ${compareMode ? "rgba(139,92,246,0.35)" : "rgba(255,255,255,0.1)"}`,
-              color: compareMode ? "#C4B5FD" : "#94A3B8",
-              backdropFilter: "blur(16px)",
-            }}>
-            {compareMode ? "Exit compare" : "Compare nodes"}
-          </button>
-          {compareMode&&(
-            <div className="text-[11px]" style={{color:"#64748B"}}>
-              Select a node to pin left, then select other nodes to compare on the right.
-            </div>
-          )}
-        </div>
-      )}
-
-      {isDash&&<IntelPanels simulatedEvent={simulatedEvent}/>}
+      <TopNav cur={view} onNav={onNav}/>
 
       <AnimatePresence>
-        {isDash && showStoryNotice && (
-          <motion.div
-            initial={{opacity:0,y:-8,x:20}}
-            animate={{opacity:1,y:0,x:0}}
-            exit={{opacity:0,y:-8,x:20}}
-            className="absolute top-[126px] right-4 z-50 w-[540px] rounded-xl p-3"
-            style={{
-              background:"rgba(8,18,30,0.94)",
-              border:"1px solid rgba(34,211,238,0.35)",
-              boxShadow:"0 12px 36px rgba(0,0,0,0.5)",
-            }}>
-            <div className="flex items-start gap-2">
-              <Bell size={14} style={{color:"#22D3EE",marginTop:2}}/>
-              <div className="min-w-0 w-full">
-                {storyStep === "crawler" && (
-                  <>
-                    <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#22D3EE",fontFamily:"IBM Plex Sans, sans-serif"}}>
-                      Step 2 — The Crawler Agent (1:05–1:30)
-                    </p>
-                    <p className="text-xs mt-1 leading-relaxed" style={{color:"#94A3B8"}}>
-                      Show a screen recording or mockup of the crawler running. Playwright + BeautifulSoup detecting new documents on a government portal. Highlight: it detects new publications, updated pages, amended documents — not just one-time scraping but continuous monitoring. Voiceover: "A crawler agent monitors each source on a configurable schedule. When a new law is published or an existing one is amended, the system detects the change automatically."
-                    </p>
-                  </>
-                )}
-
-                {storyStep === "ocr" && (
-                  <>
-                    <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#60A5FA",fontFamily:"IBM Plex Sans, sans-serif"}}>
-                      Step 3 — OCR Processing (1:30–1:55)
-                    </p>
-                    <p className="text-xs mt-1 leading-relaxed" style={{color:"#94A3B8"}}>
-                      Voiceover: "Many government documents in Asia-Pacific are published as scanned images — not searchable text. AILA uses Tesseract and PaddleOCR to convert these into machine-readable content, preserving document structure and layout metadata."
-                    </p>
-                    <div className="mt-2 grid grid-cols-2 gap-2">
-                      <div className="rounded-lg p-2" style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)"}}>
-                        <p className="text-[11px] uppercase" style={{color:"#64748B"}}>Input (Scanned PDF)</p>
-                        <p className="text-xs mt-1" style={{color:"#94A3B8"}}>No selectable text · skewed scan · stamps/noise</p>
-                      </div>
-                      <div className="rounded-lg p-2" style={{background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.25)"}}>
-                        <p className="text-[11px] uppercase" style={{color:"#93C5FD"}}>Output (Extracted Text)</p>
-                        <p className="text-xs mt-1" style={{color:"#DBEAFE"}}>Structured clauses + headings + page/line metadata</p>
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {storyStep === "translation" && (
-                  <>
-                    <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#C4B5FD",fontFamily:"IBM Plex Sans, sans-serif"}}>
-                      Step 4 — Multilingual Handling (1:55–2:20)
-                    </p>
-                    <p className="text-xs mt-1 leading-relaxed" style={{color:"#94A3B8"}}>
-                      Voiceover: "Regulations across ASEAN are published in local languages. A translation agent normalizes content into English while preserving legal terminology accuracy through domain-specific glossaries."
-                    </p>
-                    <div className="mt-2 grid grid-cols-2 gap-2">
-                      <div className="rounded-lg p-2" style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)"}}>
-                        <p className="text-[11px] uppercase" style={{color:"#64748B"}}>Thai Source</p>
-                        <p className="text-xs mt-1" style={{color:"#94A3B8"}}>“พระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล…”</p>
-                      </div>
-                      <div className="rounded-lg p-2" style={{background:"rgba(139,92,246,0.09)",border:"1px solid rgba(139,92,246,0.25)"}}>
-                        <p className="text-[11px] uppercase" style={{color:"#C4B5FD"}}>English Normalized</p>
-                        <p className="text-xs mt-1" style={{color:"#E9D5FF"}}>“Personal Data Protection obligations…”</p>
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {storyStep === "versioning" && (
-                  <>
-                    <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#6EE7B7",fontFamily:"IBM Plex Sans, sans-serif"}}>
-                      Step 5 — Versioning &amp; Storage (2:20–2:30)
-                    </p>
-                    <p className="text-xs mt-1 leading-relaxed" style={{color:"#94A3B8"}}>
-                      Voiceover: "Every document is stored with its full amendment chain — so the system knows not just what a law says today, but what it said before."
-                    </p>
-                    <div className="mt-2 space-y-1.5">
-                      {[
-                        { v: "v3 (Current)", t: "2026-05-25 10:20 UTC", c: "#6EE7B7" },
-                        { v: "v2", t: "2025-11-03 14:40 UTC", c: "#93C5FD" },
-                        { v: "v1", t: "2024-08-16 09:05 UTC", c: "#A78BFA" },
-                      ].map((row)=> (
-                        <div key={row.v} className="rounded-lg px-2.5 py-2 flex items-center justify-between"
-                          style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)"}}>
-                          <span className="text-xs" style={{color:row.c,fontFamily:"JetBrains Mono, monospace"}}>{row.v}</span>
-                          <span className="text-xs" style={{color:"#64748B",fontFamily:"JetBrains Mono, monospace"}}>{row.t}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {isDash && compareMode && compareLeft && (
-          <IntelligenceDrawer key={`cmp-left-${compareLeft.id}`} node={compareLeft} side="left"
-            onClose={()=>{
-              // Closing left ends comparisons; user must re-enable compare mode to start again.
-              stopCompare();
-            }}/>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {isDash && compareMode && compareRight && (
-          <IntelligenceDrawer key={`cmp-right-${compareRight.id}`} node={compareRight} side="right"
-            onClose={()=>setCompareRight(null)}/>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {isDash && !compareMode && selNode &&(
+        {isDash && selNode &&(
           <IntelligenceDrawer key={selNode.id} node={selNode} onClose={()=>setSelNode(null)}/>
         )}
       </AnimatePresence>
@@ -2064,23 +1803,23 @@ export default function App() {
             initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-12}}
             transition={{duration:0.28,ease:"easeOut"}}
             className="absolute inset-0 z-40 overflow-auto"
-            style={{background:"rgba(7,16,24,0.96)",paddingTop:"72px"}}>
-            {view==="diff"&&<DiffEngine/>}
+            style={{background:"rgba(248,250,252,0.99)",paddingTop:"56px"}}>
             {view==="simulation"&&<SimulationSandbox/>}
             {view==="memory"&&<MemoryLayer/>}
-            {view==="countries"&&<CountriesView/>}
             {view==="sme"&&<SMEAssistant/>}
-            {view==="api"&&<APIView/>}
             {view==="settings"&&<SettingsView/>}
+            {view==="diff"&&<DiffEngine/>}
+            {view==="countries"&&<CountriesView/>}
+            {view==="api"&&<APIView/>}
           </motion.div>
         )}
       </AnimatePresence>
 
-      {isDash && !compareMode && !selNode &&(
+      {isDash && !selNode &&(
         <div className="absolute bottom-1/2 left-1/2 -translate-x-1/2 translate-y-1/2 pointer-events-none select-none text-center"
-          style={{opacity:0.12}}>
-          <p className="text-xs tracking-widest uppercase" style={{color:"#F5F7FA",fontFamily:"IBM Plex Sans, sans-serif"}}>
-            Click any node to inspect · Drag to rearrange · Scroll to zoom
+          style={{opacity:0.22}}>
+          <p className="text-xs tracking-widest uppercase" style={{color:"rgba(255,255,255,0.32)",fontFamily:"IBM Plex Sans, sans-serif"}}>
+            Click any node to inspect · Drag to rotate · Scroll to zoom
           </p>
         </div>
       )}

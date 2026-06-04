@@ -2,43 +2,43 @@
 
 :root {
   --font-size: 16px;
-  --background: #071018;
-  --foreground: #F5F7FA;
-  --card: #0D1722;
-  --card-foreground: #F5F7FA;
-  --popover: #111C29;
-  --popover-foreground: #F5F7FA;
-  --primary: #3B82F6;
-  --primary-foreground: #F5F7FA;
-  --secondary: #0D1722;
-  --secondary-foreground: #94A3B8;
-  --muted: #111C29;
-  --muted-foreground: #64748B;
-  --accent: #1a2d42;
-  --accent-foreground: #F5F7FA;
-  --destructive: #EF4444;
-  --destructive-foreground: #F5F7FA;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.06);
-  --input-background: #111C29;
-  --switch-background: #1a2d42;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #1e40af;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #475569;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #eff6ff;
+  --accent-foreground: #1e40af;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #e2e8f0;
+  --input: #ffffff;
+  --input-background: #ffffff;
+  --switch-background: #cbd5e1;
   --font-weight-medium: 500;
   --font-weight-normal: 400;
-  --ring: #3B82F6;
-  --chart-1: #3B82F6;
-  --chart-2: #10B981;
-  --chart-3: #8B5CF6;
-  --chart-4: #F59E0B;
-  --chart-5: #22D3EE;
+  --ring: #1e40af;
+  --chart-1: #1e40af;
+  --chart-2: #16a34a;
+  --chart-3: #7c3aed;
+  --chart-4: #d97706;
+  --chart-5: #0891b2;
   --radius: 0.5rem;
-  --sidebar: #0D1722;
-  --sidebar-foreground: #F5F7FA;
-  --sidebar-primary: #3B82F6;
-  --sidebar-primary-foreground: #F5F7FA;
-  --sidebar-accent: #111C29;
-  --sidebar-accent-foreground: #94A3B8;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
-  --sidebar-ring: #3B82F6;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #0f172a;
+  --sidebar-primary: #1e40af;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f1f5f9;
+  --sidebar-accent-foreground: #475569;
+  --sidebar-border: #e2e8f0;
+  --sidebar-ring: #1e40af;
 }
 
 
@@ -91,11 +91,6 @@
   body {
     @apply bg-background text-foreground;
   }
-
-  /**
-  * Default typography styles for HTML elements (h1-h4, p, label, button, input).
-  * These are in @layer base, so Tailwind utility classes (like text-sm, text-lg) automatically override them.
-  */
 
   html {
     font-size: var(--font-size);
