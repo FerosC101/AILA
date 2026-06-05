@@ -7,11 +7,13 @@ import {
   ChevronRight, Radio,
   Send,
   Link,
+  FileText, Scale,
+  Search, Menu, Heart, Share2, ChevronLeft, Eye, MessageCircle,
 } from "lucide-react";
 
 // ==================== TYPES ====================
-type ViewId = "dashboard" | "graph" | "diff" | "simulation" | "memory" | "countries" | "sme" | "api" | "settings";
-type NodeType = "country" | "regulation" | "clause" | "amendment";
+type ViewId = "dashboard" | "graph" | "diff" | "simulation" | "memory" | "countries" | "sme" | "api" | "settings" | "answer";
+type NodeType = "country" | "pillar" | "regulation" | "clause" | "amendment";
 type EdgeType = "cluster" | "precedent" | "amendment" | "simulation";
 
 interface GNode {
@@ -273,6 +275,133 @@ function initGraph(w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
   return { nodes, edges };
 }
 
+// ==================== LIVE GRAPH (from backend /graph) ====================
+type ApiGraphNode = {
+  id: string; type: "country" | "pillar" | "regulation"; label: string; country: string;
+  region: string; pillar?: string; url?: string; instrument?: string; pillars?: string[];
+  policies?: string[]; coverage?: string; timeframe?: string; weight?: number;
+};
+type ApiGraph = { nodes: ApiGraphNode[]; edges: Array<{ source: string; target: string }> };
+
+const FLAG_BY_COUNTRY: Record<string, string> = {
+  Singapore: "SG", Malaysia: "MY", Thailand: "TH", Philippines: "PH",
+  Indonesia: "ID", Vietnam: "VN", Australia: "AU", ASEAN: "AS",
+  WTO: "WTO", OECD: "OECD", UNCTAD: "UN", APEC: "APEC", CPTPP: "TPP", EU: "EU", USA: "US",
+};
+const flagFor = (c: string) => FLAG_BY_COUNTRY[c] ?? c.slice(0, 2).toUpperCase();
+const shortLabelFor = (label: string) => {
+  const acronym = label.match(/\(([A-Z]{2,6})\)/);
+  if (acronym) return acronym[1];
+  return label.length > 16 ? label.slice(0, 15) + "…" : label;
+};
+
+// Pillar palette — the two governance pillars get distinct hues; everything else grey.
+const PILLAR_COLORS: Record<string, string> = {
+  "Cross-border data policies": "#06B6D4",        // cyan
+  "Domestic data protection & privacy": "#8B5CF6", // violet
+};
+const pillarColor = (name?: string) => (name && PILLAR_COLORS[name]) || "#94A3B8";
+const pillarShort = (name: string) => name.replace(/ data policies| data protection.*/i, "").trim();
+
+/** Convert the backend /graph payload into positioned GNode/GEdge (country → pillar → URL). */
+function graphFromApi(payload: ApiGraph, w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
+  const sphere = Math.min(w, h) * 0.34;
+  const nodes: GNode[] = [], edges: GEdge[] = [];
+  const jit = (m = 14) => (Math.random() - 0.5) * m;
+
+  const byId = new Map(payload.nodes.map(n => [n.id, n]));
+  const children = new Map<string, string[]>();
+  for (const e of payload.edges) {
+    if (!children.has(e.source)) children.set(e.source, []);
+    children.get(e.source)!.push(e.target);
+  }
+  const pos = new Map<string, { x: number; y: number; z: number; angle: number }>();
+  const pushEdge = (s: string, t: string) =>
+    edges.push({
+      id: `${s}->${t}`, sourceId: s, targetId: t, type: "cluster",
+      particles: Array.from({ length: 2 }, () => ({ progress: Math.random(), speed: 0.0018 + Math.random() * 0.0025, opacity: 0.7 })),
+    });
+
+  const countries = payload.nodes.filter(n => n.type === "country");
+  const placedRegs = new Set<string>();
+
+  const placeReg = (r: ApiGraphNode, cx: number, cy: number, cz: number, baseAngle: number, idx: number, n: number, color: string) => {
+    if (placedRegs.has(r.id)) return;
+    placedRegs.add(r.id);
+    const ra = baseAngle + (n > 1 ? (idx / (n - 1) - 0.5) * 1.1 : 0);
+    const rr = 52 + (idx % 3) * 14;
+    nodes.push({
+      id: r.id, type: "regulation", label: r.label, shortLabel: shortLabelFor(r.label),
+      x: cx + rr * Math.cos(ra) + jit(), y: cy + rr * Math.sin(ra) * 0.9 + jit(), z: cz + rr * Math.sin(ra * 0.8) * 0.7 + jit(),
+      vx: 0, vy: 0, vz: 0, radius: 10, color, glowColor: color, pulsePhase: Math.random() * Math.PI * 2,
+      details: {
+        category: r.coverage || "Regulation", enacted: r.timeframe || "N/A", status: "Active",
+        clauses: r.policies?.length ?? 0, amendments: 0, coverage: r.country, confidence: 0.9,
+        description: `${r.instrument}\n\nPillars: ${(r.pillars ?? []).join(", ") || "—"}\nPolicy focus: ${(r.policies ?? []).join("; ") || "—"}\nSource: ${r.url ?? ""}`,
+      },
+    });
+  };
+
+  countries.forEach((c, i) => {
+    const angle = (i / countries.length) * Math.PI * 2 - Math.PI / 2;
+    const nx = sphere * Math.cos(angle) * 0.9;
+    const ny = sphere * Math.sin(angle * 1.3) * 0.45;
+    const nz = sphere * Math.sin(angle) * 0.82;
+    pos.set(c.id, { x: nx, y: ny, z: nz, angle });
+
+    const kids = (children.get(c.id) ?? []).map(id => byId.get(id)!).filter(Boolean);
+    const regCount = payload.nodes.filter(n => n.type === "regulation" && n.country === c.country).length;
+
+    nodes.push({
+      id: c.id, type: "country", label: c.label, flag: flagFor(c.country),
+      x: nx + jit(), y: ny + jit(), z: nz + jit(), vx: 0, vy: 0, vz: 0,
+      radius: 26, color: "#64748B", glowColor: "#64748B", pulsePhase: Math.random() * Math.PI * 2,
+      details: {
+        category: "Jurisdiction", enacted: "N/A", status: "Active",
+        clauses: 0, amendments: 0, coverage: c.label, confidence: 1,
+        description: `${c.label} — ${regCount} tracked source${regCount === 1 ? "" : "s"} (${c.region}).`,
+        regulations: regCount, complianceScore: 0.8,
+      },
+    });
+
+    const pillarKids = kids.filter(k => k.type === "pillar");
+    const regKids = kids.filter(k => k.type === "regulation");
+
+    // pillar sub-hubs around the country
+    pillarKids.forEach((pl, pIdx) => {
+      const pa = angle + (pillarKids.length > 1 ? (pIdx / (pillarKids.length - 1) - 0.5) * 1.0 : 0);
+      const pr = 96;
+      const px = nx + pr * Math.cos(pa), py = ny + pr * Math.sin(pa) * 0.92, pz = nz + pr * Math.sin(pa * 0.8) * 0.7;
+      const col = pillarColor(pl.pillar);
+      nodes.push({
+        id: pl.id, type: "pillar", label: pl.label, shortLabel: pillarShort(pl.label),
+        countryId: c.id, x: px + jit(), y: py + jit(), z: pz + jit(), vx: 0, vy: 0, vz: 0,
+        radius: 16, color: col, glowColor: col, pulsePhase: Math.random() * Math.PI * 2,
+        details: {
+          category: "Policy pillar", enacted: "N/A", status: "Active",
+          clauses: 0, amendments: 0, coverage: c.label, confidence: 1,
+          description: `${pl.label} — ${(children.get(pl.id) ?? []).length} instruments in ${c.label}.`,
+        },
+      });
+      pushEdge(c.id, pl.id);
+
+      const plRegs = (children.get(pl.id) ?? []).map(id => byId.get(id)!).filter(Boolean);
+      plRegs.forEach((r, j) => {
+        placeReg(r, px, py, pz, pa, j, plRegs.length, col);
+        pushEdge(pl.id, r.id);
+      });
+    });
+
+    // regulations with no pillar hang directly off the country hub (grey)
+    regKids.forEach((r, j) => {
+      placeReg(r, nx, ny, nz, angle, j, regKids.length, "#94A3B8");
+      pushEdge(c.id, r.id);
+    });
+  });
+
+  return { nodes, edges };
+}
+
 // ==================== FORCE SIMULATION ====================
 function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
   const radius = Math.min(w, h) * 0.34;
@@ -323,12 +452,12 @@ function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
 
 // ==================== CANVAS DRAWING ====================
 const EDGE_COLORS: Record<EdgeType, [string, number, number]> = {
-  cluster:    ["140,150,170", 0.18, 0.65],
-  precedent:  ["139,92,246",  0.45, 0.8],
-  amendment:  ["245,158,11",  0.65, 1.1],
-  simulation: ["6,182,212",   0.48, 0.8],
+  cluster:    ["148,163,184", 0.28, 0.6],
+  precedent:  ["100,116,139", 0.4,  0.8],
+  amendment:  ["71,85,105",   0.5,  1.0],
+  simulation: ["148,163,184", 0.35, 0.8],
 };
-const NODE_ORDER: Record<NodeType, number> = { clause:0, amendment:1, regulation:2, country:3 };
+const NODE_ORDER: Record<NodeType, number> = { clause:0, amendment:1, regulation:2, pillar:3, country:4 };
 
 interface GraphView {
   yaw: number;
@@ -377,12 +506,14 @@ function drawGraph(
 
   const projected = new Map<string, ProjNode>(nodes.map(n => [n.id, projectNode(n, w, h, view)]));
 
-  ctx.fillStyle="rgba(255,255,255,0.035)";
+  // Dot grid — subtle dark dots on white
+  ctx.fillStyle="rgba(15,23,42,0.05)";
   for (let x=0;x<w;x+=48) for (let y=0;y<h;y+=48) {
-    ctx.beginPath(); ctx.arc(x,y,0.38,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x,y,0.5,0,Math.PI*2); ctx.fill();
   }
-  const cg=ctx.createRadialGradient(w/2,h/2,0,w/2,h/2,Math.min(w,h)*0.5);
-  cg.addColorStop(0,"rgba(99,102,241,0.05)");
+  // Faint central vignette
+  const cg=ctx.createRadialGradient(w/2,h/2,0,w/2,h/2,Math.min(w,h)*0.55);
+  cg.addColorStop(0,"rgba(100,116,139,0.04)");
   cg.addColorStop(1,"transparent");
   ctx.fillStyle=cg; ctx.fillRect(0,0,w,h);
 
@@ -415,11 +546,14 @@ function drawGraph(
     const isH=n.id===hovId, isS=n.id===selId;
     const pulse=(Math.sin(time*0.0022+n.pulsePhase)+1)/2;
 
+    const NC="#94A3B8";       // base node grey (slate-400)
+    const NC_DARK="#64748B";   // emphasis grey (slate-500)
+
     // Clause nodes: micro dots, skip full pipeline
     if (n.type==="clause") {
       ctx.save();
       ctx.beginPath(); ctx.arc(pn.x,pn.y,Math.max(1.2,pn.r*0.42),0,Math.PI*2);
-      ctx.fillStyle=h2r(n.color,0.38);
+      ctx.fillStyle=h2r(NC,0.55);
       ctx.fill(); ctx.restore();
       return;
     }
@@ -428,36 +562,49 @@ function drawGraph(
     if (n.type==="country") {
       ctx.save();
       ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+6+pulse*3,0,Math.PI*2);
-      ctx.strokeStyle=h2r(n.glowColor,0.2+pulse*0.08); ctx.lineWidth=1; ctx.stroke();
+      ctx.strokeStyle=h2r(NC_DARK,0.22+pulse*0.08); ctx.lineWidth=1; ctx.stroke();
       ctx.restore();
     }
 
-    // Amendment: pulsing amber ring
+    // Pillar: breathing ring in the pillar's colour
+    if (n.type==="pillar") {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+5+pulse*3,0,Math.PI*2);
+      ctx.strokeStyle=h2r(n.color,0.3+pulse*0.12); ctx.lineWidth=1; ctx.stroke();
+      ctx.restore();
+    }
+
+    // Amendment: pulsing grey ring
     if (n.type==="amendment") {
       const ap=(Math.sin(time*0.008+n.pulsePhase)+1)/2;
       ctx.save();
       ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+5+ap*4,0,Math.PI*2);
-      ctx.strokeStyle=h2r("#F59E0B",0.2+ap*0.32); ctx.lineWidth=1; ctx.stroke();
+      ctx.strokeStyle=h2r(NC_DARK,0.18+ap*0.28); ctx.lineWidth=1; ctx.stroke();
       ctx.restore();
     }
 
-    // Obsidian-style node fill — solid vivid circles against dark background
+    // Node fill — country grey, pillars & their regulations carry the pillar colour
+    const accent = n.type==="country" ? NC_DARK : n.color;
     ctx.save();
-    if (isS||isH) { ctx.shadowColor=n.glowColor; ctx.shadowBlur=isS?20:11; }
+    if (isS||isH) { ctx.shadowColor=h2r(accent,0.6); ctx.shadowBlur=isS?18:10; }
     ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r,0,Math.PI*2);
     if (n.type==="country") {
       const gr=ctx.createRadialGradient(pn.x-pn.r*0.28,pn.y-pn.r*0.28,0,pn.x,pn.y,pn.r);
-      gr.addColorStop(0,lighten(n.color,36)); gr.addColorStop(1,n.color);
+      gr.addColorStop(0,lighten(NC_DARK,30)); gr.addColorStop(1,NC_DARK);
+      ctx.fillStyle=gr;
+    } else if (n.type==="pillar") {
+      const gr=ctx.createRadialGradient(pn.x-pn.r*0.28,pn.y-pn.r*0.28,0,pn.x,pn.y,pn.r);
+      gr.addColorStop(0,lighten(n.color,34)); gr.addColorStop(1,n.color);
       ctx.fillStyle=gr;
     } else if (n.type==="regulation") {
-      ctx.fillStyle=h2r(n.glowColor,isS||isH?0.95:0.78);
+      ctx.fillStyle=h2r(n.color,isS||isH?0.95:0.72);
     } else {
-      ctx.fillStyle=h2r("#F59E0B",0.88);
+      ctx.fillStyle=h2r(NC_DARK,0.85); // amendment: darker grey
     }
     ctx.fill();
-    // Thin ring on regulation / amendment only
+    // Thin ring on everything except country
     if (n.type!=="country") {
-      ctx.strokeStyle=h2r(n.type==="amendment"?"#F59E0B":n.glowColor,isS?1:isH?0.75:0.45);
+      ctx.strokeStyle=h2r(accent,isS?1:isH?0.75:0.45);
       ctx.lineWidth=isS?1.5:0.8; ctx.stroke();
     }
     ctx.restore();
@@ -465,10 +612,10 @@ function drawGraph(
     // Flag text for country nodes
     if (n.type==="country"&&n.flag) {
       ctx.save();
-      ctx.font=`600 ${Math.floor(pn.r*0.74)}px sans-serif`;
+      ctx.font=`700 ${Math.floor(pn.r*0.7)}px sans-serif`;
       ctx.textAlign="center"; ctx.textBaseline="middle";
       ctx.fillStyle="#FFFFFF";
-      ctx.shadowColor="rgba(0,0,0,0.5)"; ctx.shadowBlur=3;
+      ctx.shadowColor="rgba(15,23,42,0.35)"; ctx.shadowBlur=2;
       ctx.fillText(n.flag,pn.x,pn.y+1);
       ctx.restore();
     }
@@ -482,15 +629,16 @@ function drawGraph(
     }
 
     // Obsidian-style labels: clean floating text, no pill background
-    const showLabel=n.type==="country"||isH||isS;
+    const isHub=n.type==="country"||n.type==="pillar";
+    const showLabel=isHub||isH||isS;
     if (showLabel) {
       const label=n.shortLabel||n.label;
-      const fs=n.type==="country"?11:9;
+      const fs=n.type==="country"?11:n.type==="pillar"?10:9;
       ctx.save();
-      ctx.font=`${n.type==="country"?"600 ":"400 "}${fs}px Inter, sans-serif`;
+      ctx.font=`${isHub?"600 ":"400 "}${fs}px Inter, sans-serif`;
       ctx.textAlign="center"; ctx.textBaseline="top";
-      ctx.shadowColor="rgba(0,0,0,0.95)"; ctx.shadowBlur=6;
-      ctx.fillStyle=n.type==="country"?"#FFFFFF":"rgba(200,210,225,0.9)";
+      ctx.shadowColor="rgba(255,255,255,0.9)"; ctx.shadowBlur=4;
+      ctx.fillStyle=n.type==="country"?"#1E293B":n.type==="pillar"?n.color:"rgba(71,85,105,0.92)";
       ctx.fillText(label,pn.x,pn.y+pn.r+6);
       ctx.restore();
     }
@@ -571,6 +719,26 @@ function RegulatoryGraph({
     focusNode(n);
   },[selId, focusNode]);
   useEffect(()=>{ gr.current.dimmed=dimmed; },[dimmed]);
+
+  // Load the live graph (countries + scraped URL nodes) from the backend when configured.
+  useEffect(()=>{
+    const base = import.meta.env.VITE_AILA_API_BASE_URL?.trim();
+    if (!base) return;
+    let cancelled = false;
+    fetch(`${base}/graph`)
+      .then(r => r.json())
+      .then((payload: ApiGraph) => {
+        if (cancelled || !payload?.nodes?.length) return;
+        const w = gr.current.w || window.innerWidth;
+        const h = gr.current.h || window.innerHeight;
+        const { nodes, edges } = graphFromApi(payload, w, h);
+        gr.current.nodes = nodes;
+        gr.current.edges = edges;
+        gr.current.init = true;
+      })
+      .catch(() => {/* keep seed graph on failure */});
+    return ()=>{ cancelled = true; };
+  },[]);
 
   useEffect(()=>{
     if (!simulateAction.tick || !gr.current.init || gr.current.nodes.length===0) return;
@@ -1454,85 +1622,425 @@ function SimulationSandbox() {
 
 // ==================== SME ASSISTANT ====================
 
-type ChatMsg = { role: "ai" | "user"; text: string };
+type RichSection = { heading: string; type: "success"|"warning"|"info"|"neutral"; bullets: string[] };
+type RichCitation = { num: number; title: string; instrument: string; section: string; flag: string };
+type RichResponse = { summary: string; verdict: { label: string; color: string; bg: string }; sections: RichSection[]; citations: RichCitation[]; tags: string[] };
+type ChatMsg = { role: "ai"|"user"; text: string; rich?: RichResponse };
 
 const INIT_MSGS: ChatMsg[] = [
-  {role:"ai",text:"Hello! I'm AILA's SME Assistant. I can help you understand regulatory requirements for your business operating in Southeast Asia. What would you like to know?"},
+  {role:"ai",text:"Hello! I'm AILA's SME Assistant. Ask me about regulatory requirements, cross-border data transfers, or compliance obligations across Southeast Asia."},
 ];
 
-const SME_ASSISTANT_FIXED_RESPONSE = `Yes — you can store users’ health data on AWS Singapore, but only under strict compliance conditions under Philippine data privacy law.
+const SME_RICH_RESPONSE: RichResponse = {
+  summary: "Yes — you can store Filipino users’ health data on AWS Singapore, but only under strict compliance conditions. The Philippine Data Privacy Act classifies health data as sensitive personal information, making cross-border storage permissible only with strong safeguards.",
+  verdict: { label: "Conditionally Permitted", color: "#B45309", bg: "rgba(245,158,11,0.09)" },
+  sections: [
+    {
+      heading: "You are allowed if you implement",
+      type: "success",
+      bullets: [
+        "Explicit, informed consent from users for offshore storage and processing",
+        "A Data Processing Agreement (DPA) with AWS covering breach notification and security obligations",
+        "Encryption of health data both at rest and in transit",
+        "Strong access controls and audit logging for all sensitive records",
+      ],
+    },
+    {
+      heading: "Risk factors to consider",
+      type: "warning",
+      bullets: [
+        "Health data is sensitive personal information — subject to stricter NPC scrutiny and higher penalties",
+        "Cross-border processing increases regulatory exposure, especially for analytics or AI-model training",
+        "Non-compliance can trigger mandatory NPC reporting and fines up to ₱5M per violation",
+      ],
+    },
+    {
+      heading: "Best-practice approach",
+      type: "info",
+      bullets: [
+        "Use AWS Singapore for compute, but keep a mirrored storage layer in the Philippines for sensitive datasets",
+        "Separate identifiable health data from analytical datasets (data minimization principle)",
+        "Run a Privacy Impact Assessment (PIA) before deployment",
+      ],
+    },
+  ],
+  citations: [
+    { num: 1, title: "Data Privacy Act", instrument: "R.A. 10173, §§ 12–13", section: "Sensitive Personal Information and Cross-border Transfer Requirements", flag: "🇵🇭" },
+    { num: 2, title: "NPC Circular 2022-01", instrument: "National Privacy Commission", section: "Guidelines on Cross-border Data Sharing and Processing", flag: "🇵🇭" },
+    { num: 3, title: "NPC Advisory 2023-03", instrument: "National Privacy Commission", section: "Cloud Storage and Offshore Processing of Sensitive Personal Information", flag: "🇵🇭" },
+    { num: 4, title: "AWS Data Processing Addendum", instrument: "Amazon Web Services, Inc.", section: "APAC Compliance Obligations and Breach Notification Requirements", flag: "🌐" },
+  ],
+  tags: ["Health Data", "Cross-border Transfer", "Philippines", "Cloud Storage", "DPA"],
+};
 
-Philippine Data Privacy Act (R.A. 10173) classifies health data as sensitive personal information, which means cross-border storage is allowed only if you implement strong safeguards, including explicit user consent, legitimate purpose, and proportional data processing.
+const RELATED_ARTICLES = [
+  { source:"NPC Bulletin", cat:"Regulation", catColor:"#DC2626", date:"28 Mar 2024", title:"Cross-Border Data Transfers Under the Philippine Data Privacy Act", read:"6 min", grad:["#FEE2E2","#FECACA"] },
+  { source:"ASEAN Privacy Review", cat:"Best Practice", catColor:"#EA580C", date:"14 Jan 2024", title:"Cloud Storage Compliance for Health-Tech Startups in Southeast Asia", read:"9 min", grad:["#FFEDD5","#FED7AA"] },
+  { source:"Cloud Legal Journal", cat:"Advisory", catColor:"#2563EB", date:"30 Nov 2023", title:"AWS Singapore Region: Data Residency & Adequacy Considerations", read:"5 min", grad:["#DBEAFE","#BFDBFE"] },
+];
 
-Because AWS Singapore involves cross-border data transfer, you must also comply with the Data Privacy Act’s transfer requirements, which generally require that the receiving jurisdiction provides adequate protection or that you implement enforceable contractual and technical safeguards.
+const PDF_SNIPPET = {
+  filename: "data_processing_policy_v2.1.pdf",
+  pages: 24,
+  size: "1.8 MB",
+  section: "§ 4.2 — Offshore Storage & Sub-processors",
+  lines: [
+    { t:"4.2.1  The Company may store and process Personal Data using infrastructure", hl:false },
+    { t:"        located outside the Republic of the Philippines, including the AWS", hl:false },
+    { t:"        Asia Pacific (Singapore) region, provided that:", hl:false },
+    { t:"        (a) the data subject has given explicit, informed consent to such", hl:true },
+    { t:"            offshore processing of their health-related information;", hl:true },
+    { t:"        (b) a Data Processing Agreement is executed with the sub-processor", hl:true },
+    { t:"            addressing breach notification within seventy-two (72) hours;", hl:false },
+    { t:"        (c) all Sensitive Personal Information is encrypted at rest using", hl:false },
+    { t:"            AES-256 and in transit using TLS 1.2 or higher.", hl:false },
+  ],
+};
 
-Practically, this means:
+// ===== Real long-form legal content (Philippine Data Privacy Act) =====
+const ARTICLE = {
+  category: "Data Privacy · Cross-Border",
+  author: { name:"AILA Research Engine", role:"Regulatory Analyst", initials:"AI" },
+  date: "June 5, 2026",
+  views: "1,043",
+  lead: "Under the Philippine Data Privacy Act of 2012 (Republic Act No. 10173), a business may transfer personal data to infrastructure located abroad — including the AWS Asia Pacific (Singapore) region. But because health information is classified as sensitive personal information, the law imposes heightened conditions: a lawful basis under Section 13, the accountability obligations of Section 21, and security measures under Section 20. Done correctly, offshore storage is permissible; done carelessly, it exposes the controller to criminal liability.",
+  body: [
+    {
+      heading: "Legal Basis",
+      paras: [
+        "The Data Privacy Act of 2012 (R.A. 10173) governs the processing of all personal data in the Philippines and is enforced by the National Privacy Commission (NPC), the independent body that became operational in 2016 together with the Act's Implementing Rules and Regulations (IRR).",
+        "Section 3(l) defines sensitive personal information to include any data about an individual's health, genetic make-up, or sexual life. Health records therefore fall squarely within the most protected category of data under Philippine law, and Section 13 prohibits their processing unless a specific lawful ground applies — chief among them the data subject's explicit consent given prior to processing.",
+      ],
+    },
+    {
+      heading: "Cross-Border Transfer & Accountability",
+      paras: [
+        "The Act applies extraterritorially. Section 6 extends its reach to processing carried out abroad where it relates to Philippine residents, and Section 21 codifies the principle of accountability: a personal information controller remains responsible for personal data under its control or custody, including information that has been transferred to a third party for processing — whether domestically or internationally.",
+        "In practical terms, moving health data to AWS Singapore does not transfer away your legal exposure. The controller must use contractual or other reasonable means to ensure that the overseas processor provides a comparable level of protection to that required under the Act. This is the core function of a Data Processing Agreement (DPA).",
+      ],
+    },
+  ],
+  pullQuote: {
+    text: "The personal information controller is responsible for personal data under its control or custody, including data transferred to a third party for processing — whether domestically or internationally.",
+    cite: "R.A. 10173, Section 21 — Principle of Accountability",
+  },
+  history: {
+    heading: "The first comprehensive privacy law in the Philippines was enacted in 2012",
+    sideCaption: "R.A. 10173 was signed into law on August 15, 2012, modeled on the EU Data Protection Directive and the APEC Privacy Framework.",
+    sideLabel: "About the NPC",
+    paras: [
+      "Before R.A. 10173, the Philippines had no general statute governing the processing of personal data. The Act was signed into law on August 15, 2012, drawing on the EU Data Protection Directive 95/46/EC and the APEC Privacy Framework, and was designed in part to support the country's booming business-process-outsourcing sector.",
+      "The National Privacy Commission was constituted in 2016 and issued the IRR the same year, followed by a series of circulars on security of personal data (NPC Circular 16-01), data sharing agreements, and personal data breach management (NPC Circular 16-03), which requires notification of the Commission and affected data subjects within seventy-two (72) hours of knowledge of a qualifying breach.",
+    ],
+  },
+  callout: "Health data demands explicit consent, an executed Data Processing Agreement, and end-to-end encryption. Under Philippine law these are mandatory — not best-effort.",
+  penalties: [
+    { offense:"Unauthorized processing of sensitive personal information", penalty:"3–6 years imprisonment + ₱500,000–₱4,000,000", ref:"§ 25" },
+    { offense:"Processing for unauthorized purposes (sensitive PII)", penalty:"2–7 years imprisonment + ₱500,000–₱2,000,000", ref:"§ 28" },
+    { offense:"Concealment of a security breach involving sensitive PII", penalty:"1.5–5 years imprisonment + ₱500,000–₱1,000,000", ref:"§ 30" },
+  ],
+  tags: ["Data Privacy", "R.A. 10173", "Cross-Border", "Health Data", "NPC"],
+};
 
-You are allowed to proceed IF you implement:
+// Real cited provisions (rendered as the "notes" thread)
+const CITED_PROVISIONS = [
+  { src:"R.A. 10173 — Data Privacy Act of 2012", flag:"🇵🇭", date:"§ 13", note:"Processing of sensitive personal information is prohibited except where the data subject has given consent specific to the purpose, or processing is necessary to protect the life and health of the data subject." },
+  { src:"R.A. 10173 — Data Privacy Act of 2012", flag:"🇵🇭", date:"§ 20", note:"The personal information controller must implement reasonable and appropriate organizational, physical, and technical security measures intended for the protection of personal information against natural and human dangers." },
+  { src:"NPC Circular 16-03", flag:"🇵🇭", date:"2016", note:"A personal data breach involving sensitive personal information that may give rise to a real risk of serious harm must be notified to the Commission and affected data subjects within 72 hours of knowledge." },
+];
 
-Explicit, informed consent from users for offshore storage and processing
-A Data Processing Agreement (DPA) with AWS covering breach notification and security obligations
-Encryption of health data both at rest and in transit
-Strong access controls and audit logging for all sensitive records
+function AnswerPage({ query, onBack }: { query: string; onBack: () => void }) {
+  const r = SME_RICH_RESPONSE;
+  const serif = "Georgia, 'Times New Roman', serif";
+  const frictionColor:Record<string,string>={Low:"#10B981",Medium:"#F59E0B",High:"#EF4444"};
+  const flagEmoji:Record<string,string>={SG:"🇸🇬",MY:"🇲🇾",TH:"🇹🇭",ID:"🇮🇩",VN:"🇻🇳",PH:"🇵🇭"};
+  const others = ASEAN_TRANSFER_RULES.filter(x=>x.key!=="ph");
+  const ph = ASEAN_TRANSFER_RULES.find(x=>x.key==="ph")!;
+  const A = ARTICLE;
 
-You should be cautious because:
+  return (
+    <div style={{position:"absolute",inset:0,background:"#FFFFFF",overflowY:"auto",zIndex:50,fontFamily:"Inter, sans-serif"}}>
+      {/* ===== DARK MASTHEAD ===== */}
+      <div style={{background:"#1A1A1A",color:"#fff"}}>
+        <div style={{maxWidth:"1080px",margin:"0 auto",padding:"16px 28px",display:"flex",alignItems:"center",gap:"16px"}}>
+          <div style={{display:"flex",gap:"8px"}}>
+            {["f","t","in"].map(s=>(
+              <span key={s} style={{width:"24px",height:"24px",borderRadius:"50%",border:"1px solid rgba(255,255,255,0.25)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"10px",color:"rgba(255,255,255,0.7)"}}>{s}</span>
+            ))}
+          </div>
+          <div style={{flex:1,textAlign:"center"}}>
+            <span style={{fontFamily:serif,fontSize:"22px",fontWeight:700,letterSpacing:"0.01em"}}>AILA <span style={{fontWeight:400}}>Legal</span></span>
+          </div>
+          <button onClick={onBack} style={{fontSize:"11px",fontWeight:600,letterSpacing:"0.12em",color:"rgba(255,255,255,0.85)",background:"none",border:"1px solid rgba(255,255,255,0.3)",borderRadius:"4px",padding:"7px 16px",cursor:"pointer"}}>SIGN IN</button>
+        </div>
+        <div style={{borderTop:"1px solid rgba(255,255,255,0.1)"}}>
+          <div style={{maxWidth:"1080px",margin:"0 auto",padding:"12px 28px",display:"flex",alignItems:"center",gap:"16px"}}>
+            <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.85)",display:"flex",alignItems:"center"}}><Menu size={18}/></button>
+            <div style={{flex:1,display:"flex",justifyContent:"center",gap:"30px"}}>
+              {["PRIVACY","FINTECH","AI","CROSS-BORDER","ADVISORIES"].map(t=>(
+                <span key={t} style={{fontSize:"11px",fontWeight:600,letterSpacing:"0.1em",color:"rgba(255,255,255,0.7)",cursor:"default"}}>{t}</span>
+              ))}
+            </div>
+            <Search size={16} style={{color:"rgba(255,255,255,0.7)"}}/>
+          </div>
+        </div>
+      </div>
 
-Health data is considered high-risk and subject to stricter scrutiny by the National Privacy Commission (NPC)
-Cross-border processing increases regulatory exposure, especially if data is used for analytics or AI training
-Non-compliance can trigger mandatory reporting requirements and penalties
+      {/* ===== HERO ===== */}
+      <div style={{position:"relative",minHeight:"360px",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",background:"linear-gradient(135deg,#1E3A5F 0%,#2D6A8F 50%,#3B8EA5 100%)"}}>
+        <div style={{position:"absolute",inset:0,background:"linear-gradient(180deg,rgba(15,23,42,0.35),rgba(15,23,42,0.62))"}}/>
+        <div style={{position:"relative",textAlign:"center",padding:"56px 28px",maxWidth:"760px"}}>
+          <span style={{display:"inline-block",fontSize:"10px",fontWeight:700,letterSpacing:"0.18em",color:"#fff",border:"1px solid rgba(255,255,255,0.5)",borderRadius:"3px",padding:"5px 12px",marginBottom:"22px"}}>DATA PRIVACY</span>
+          <h1 style={{fontFamily:serif,fontSize:"42px",lineHeight:1.18,fontWeight:700,color:"#fff",margin:"0 0 22px",letterSpacing:"-0.01em"}}>{query}</h1>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"22px",color:"rgba(255,255,255,0.85)",fontSize:"12px"}}>
+            <span>{A.date}</span>
+            <span style={{display:"inline-flex",alignItems:"center",gap:"6px"}}><Eye size={13}/> {A.views}</span>
+            <span style={{display:"inline-flex",alignItems:"center",gap:"6px"}}><MessageCircle size={13}/> {CITED_PROVISIONS.length}</span>
+            <span style={{display:"inline-flex",alignItems:"center",gap:"6px",border:"1px solid rgba(255,255,255,0.35)",borderRadius:"20px",padding:"4px 12px"}}><Share2 size={12}/> Share</span>
+          </div>
+        </div>
+      </div>
 
-Best-practice approach (what most compliant startups do):
+      {/* ===== ARTICLE BODY ===== */}
+      <div style={{maxWidth:"940px",margin:"0 auto",padding:"56px 28px 0"}}>
+        <div style={{display:"grid",gridTemplateColumns:"190px 1fr",gap:"44px",alignItems:"start"}}>
+          {/* author card */}
+          <aside style={{position:"sticky",top:"28px",textAlign:"center",borderRight:"1px solid rgba(15,23,42,0.08)",paddingRight:"24px"}}>
+            <div style={{width:"72px",height:"72px",borderRadius:"50%",margin:"0 auto 14px",background:"linear-gradient(135deg,#1D4ED8,#3B82F6)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:"22px",fontFamily:serif}}>{A.author.initials}</div>
+            <p style={{fontSize:"11px",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"#0F172A",margin:"0 0 3px"}}>{A.author.name}</p>
+            <p style={{fontSize:"11px",color:"#94A3B8",margin:"0 0 14px"}}>{A.author.role}</p>
+            <div style={{display:"flex",justifyContent:"center",gap:"8px",marginBottom:"16px"}}>
+              {["f","t","in"].map(s=>(<span key={s} style={{width:"24px",height:"24px",borderRadius:"50%",border:"1px solid rgba(15,23,42,0.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"10px",color:"#64748B"}}>{s}</span>))}
+            </div>
+            <span style={{display:"inline-block",fontSize:"10px",fontWeight:700,letterSpacing:"0.12em",color:"#1D4ED8",borderBottom:"1px solid rgba(29,78,216,0.3)",paddingBottom:"3px",marginBottom:"18px",cursor:"default"}}>ALL SOURCES</span>
+            <div style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",color:r.verdict.color,background:r.verdict.bg,padding:"6px 8px",borderRadius:"6px",lineHeight:1.4}}>{r.verdict.label}</div>
+          </aside>
 
-Use AWS Singapore for scalable compute, but keep a fallback or mirrored storage layer in the Philippines for sensitive datasets
-Separate identifiable health data from analytical datasets (data minimization principle)
-Run a Privacy Impact Assessment before deployment
+          {/* prose */}
+          <div>
+            <p style={{fontSize:"18px",lineHeight:1.7,color:"#1E293B",margin:"0 0 34px",fontFamily:serif}}>{A.lead}</p>
+            {A.body.map((s,i)=>(
+              <div key={i} style={{marginBottom:"30px"}}>
+                <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#0F172A",margin:"0 0 12px"}}>{s.heading}</h2>
+                {s.paras.map((p,j)=>(<p key={j} style={{fontSize:"15px",lineHeight:1.78,color:"#334155",margin:"0 0 14px"}}>{p}</p>))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
 
-Net result: this is not prohibited, but it is high-risk and compliance-heavy, and you should treat consent + encryption + contractual safeguards as mandatory, not optional.
+      {/* ===== EXHIBIT: uploaded PDF + pull quote ===== */}
+      <div style={{maxWidth:"940px",margin:"24px auto 0",padding:"0 28px"}}>
+        <div style={{position:"relative"}}>
+          {/* document exhibit */}
+          <div style={{border:"1px solid rgba(15,23,42,0.12)",borderRadius:"6px",overflow:"hidden",background:"#0F172A"}}>
+            <div style={{display:"flex",alignItems:"center",gap:"10px",padding:"12px 18px",borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
+              <FileText size={14} style={{color:"#F87171"}}/>
+              <span style={{fontSize:"12px",fontWeight:600,color:"#E2E8F0"}}>{PDF_SNIPPET.filename}</span>
+              <span style={{fontSize:"11px",color:"rgba(255,255,255,0.4)"}}>· {PDF_SNIPPET.section}</span>
+            </div>
+            <div style={{padding:"20px 22px 24px 200px",fontFamily:"JetBrains Mono, monospace",fontSize:"12px",lineHeight:1.9}}>
+              {PDF_SNIPPET.lines.map((ln,i)=>(
+                <div key={i} style={{display:"flex",gap:"14px",background:ln.hl?"rgba(250,204,21,0.16)":"transparent",margin:"0 -8px",padding:"0 8px",borderRadius:"3px"}}>
+                  <span style={{color:"rgba(255,255,255,0.25)",userSelect:"none",minWidth:"18px",textAlign:"right"}}>{i+1}</span>
+                  <span style={{color:ln.hl?"#FDE68A":"rgba(226,232,240,0.7)",whiteSpace:"pre"}}>{ln.t}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          {/* pull-quote card */}
+          <div style={{position:"absolute",top:"54px",left:"0",width:"190px",background:"#fff",border:"1px solid rgba(15,23,42,0.1)",borderRadius:"4px",padding:"18px 18px 16px",boxShadow:"0 16px 40px rgba(15,23,42,0.18)"}}>
+            <p style={{fontFamily:serif,fontStyle:"italic",fontSize:"14px",lineHeight:1.55,color:"#1E293B",margin:"0 0 12px"}}>{A.pullQuote.text}</p>
+            <p style={{fontSize:"10px",color:"#94A3B8",margin:0,lineHeight:1.4}}>{A.pullQuote.cite}</p>
+          </div>
+          {/* arrows */}
+          <button style={{position:"absolute",left:"-18px",top:"50%",transform:"translateY(-50%)",width:"40px",height:"40px",borderRadius:"50%",background:"#fff",border:"1px solid rgba(15,23,42,0.12)",boxShadow:"0 6px 18px rgba(15,23,42,0.12)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}><ChevronLeft size={18} style={{color:"#475569"}}/></button>
+          <button style={{position:"absolute",right:"-18px",top:"50%",transform:"translateY(-50%)",width:"40px",height:"40px",borderRadius:"50%",background:"#fff",border:"1px solid rgba(15,23,42,0.12)",boxShadow:"0 6px 18px rgba(15,23,42,0.12)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}><ChevronRight size={18} style={{color:"#475569"}}/></button>
+        </div>
+      </div>
 
-Sources: Philippine Data Privacy Act (R.A. 10173), NPC circulars on data sharing and cross-border transfers.`;
+      {/* ===== HISTORY / BACKGROUND ===== */}
+      <div style={{maxWidth:"940px",margin:"0 auto",padding:"56px 28px 0"}}>
+        <div style={{display:"grid",gridTemplateColumns:"190px 1fr",gap:"44px",alignItems:"start"}}>
+          {/* side thumb + caption */}
+          <aside style={{textAlign:"left",borderRight:"1px solid rgba(15,23,42,0.08)",paddingRight:"24px"}}>
+            <div style={{width:"100%",height:"110px",borderRadius:"4px",background:"linear-gradient(135deg,#E2E8F0,#CBD5E1)",display:"flex",alignItems:"center",justifyContent:"center",marginBottom:"12px"}}>
+              <Scale size={30} style={{color:"rgba(15,23,42,0.25)"}}/>
+            </div>
+            <p style={{fontSize:"11px",color:"#64748B",lineHeight:1.55,margin:"0 0 12px"}}>{A.history.sideCaption}</p>
+            <span style={{display:"inline-flex",alignItems:"center",gap:"5px",fontSize:"10px",fontWeight:700,letterSpacing:"0.08em",color:"#1D4ED8",cursor:"default"}}><ChevronRight size={11}/> {A.history.sideLabel}</span>
+          </aside>
+          {/* text */}
+          <div>
+            <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#0F172A",margin:"0 0 12px"}}>Regulatory Background</h2>
+            {A.history.paras.map((p,i)=>(<p key={i} style={{fontSize:"15px",lineHeight:1.78,color:"#334155",margin:"0 0 14px"}}>{p}</p>))}
+            <h2 style={{fontFamily:serif,fontSize:"27px",fontWeight:700,color:"#0F172A",lineHeight:1.3,margin:"28px 0 16px",paddingBottom:"16px",borderBottom:"1px solid rgba(15,23,42,0.1)"}}>{A.history.heading}</h2>
+            {/* callout */}
+            <blockquote style={{margin:"24px 0",padding:"6px 0 6px 22px",borderLeft:"3px solid #1D4ED8"}}>
+              <p style={{fontFamily:serif,fontStyle:"italic",fontSize:"19px",lineHeight:1.55,color:"#0F172A",margin:0}}>{A.callout}</p>
+            </blockquote>
+          </div>
+        </div>
+      </div>
 
-function SMEAssistant() {
+      {/* ===== PENALTIES ===== */}
+      <div style={{maxWidth:"940px",margin:"40px auto 0",padding:"0 28px"}}>
+        <div style={{maxWidth:"706px",marginLeft:"auto"}}>
+          <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#0F172A",margin:"0 0 16px"}}>Penalties Under the Act</h2>
+          <div style={{border:"1px solid rgba(15,23,42,0.1)",borderRadius:"8px",overflow:"hidden"}}>
+            {A.penalties.map((p,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:"14px",padding:"14px 16px",borderBottom:i<A.penalties.length-1?"1px solid rgba(15,23,42,0.07)":"none"}}>
+                <span style={{fontSize:"11px",fontWeight:700,color:"#DC2626",fontFamily:"JetBrains Mono, monospace",minWidth:"34px"}}>{p.ref}</span>
+                <span style={{flex:1,fontSize:"13.5px",color:"#1E293B"}}>{p.offense}</span>
+                <span style={{fontSize:"12px",fontWeight:600,color:"#475569",textAlign:"right"}}>{p.penalty}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ===== REGIONAL COMPARISON ===== */}
+      <div style={{maxWidth:"940px",margin:"56px auto 0",padding:"0 28px"}}>
+        <div style={{maxWidth:"706px",marginLeft:"auto"}}>
+          <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#0F172A",margin:"0 0 6px"}}>How the Region Compares</h2>
+          <p style={{fontSize:"14px",color:"#64748B",margin:"0 0 18px"}}>Cross-border transfer of sensitive data across ASEAN jurisdictions.</p>
+          <div style={{border:"1.5px solid rgba(29,78,216,0.3)",borderRadius:"12px",padding:"15px 17px",marginBottom:"12px",background:"rgba(59,130,246,0.04)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"7px"}}>
+              <span style={{fontSize:"19px"}}>🇵🇭</span>
+              <span style={{fontSize:"14px",fontWeight:700,color:"#0F172A"}}>{ph.name}</span>
+              <span style={{fontSize:"10px",fontWeight:700,color:"#1D4ED8",background:"rgba(29,78,216,0.1)",padding:"2px 8px",borderRadius:"20px",letterSpacing:"0.05em"}}>YOUR JURISDICTION</span>
+              <div style={{flex:1}}/>
+              <span style={{fontSize:"11px",fontWeight:700,color:frictionColor[ph.friction]}}>{ph.friction} friction</span>
+            </div>
+            <p style={{fontSize:"13px",color:"#475569",margin:0,lineHeight:1.55}}>{ph.summary}</p>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>
+            {others.map(c=>(
+              <div key={c.key} style={{border:"1px solid rgba(15,23,42,0.09)",borderRadius:"12px",padding:"14px",background:"#fff"}}>
+                <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"7px"}}>
+                  <span style={{fontSize:"16px"}}>{flagEmoji[c.flag]}</span>
+                  <span style={{fontSize:"13px",fontWeight:700,color:"#0F172A"}}>{c.name}</span>
+                  <div style={{flex:1}}/>
+                  <span style={{fontSize:"10px",fontWeight:700,color:frictionColor[c.friction],background:frictionColor[c.friction]+"14",padding:"2px 8px",borderRadius:"20px"}}>{c.friction}</span>
+                </div>
+                <p style={{fontSize:"12px",color:"#64748B",margin:0,lineHeight:1.55}}>{c.summary}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ===== TAGS + ACTIONS ===== */}
+      <div style={{maxWidth:"940px",margin:"48px auto 0",padding:"0 28px"}}>
+        <div style={{maxWidth:"706px",marginLeft:"auto"}}>
+          <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"20px"}}>
+            {A.tags.map(t=>(<span key={t} style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:"#64748B",border:"1px solid rgba(15,23,42,0.14)",borderRadius:"4px",padding:"5px 10px"}}>{t}</span>))}
+          </div>
+          <div style={{display:"flex",gap:"10px"}}>
+            <button style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",fontWeight:600,color:"#64748B",background:"#fff",border:"1px solid rgba(15,23,42,0.14)",borderRadius:"24px",padding:"8px 16px",cursor:"pointer"}}><Heart size={14}/> Like <span style={{color:"#CBD5E1"}}>· 13</span></button>
+            <button style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",fontWeight:600,color:"#fff",background:"#1877F2",border:"none",borderRadius:"24px",padding:"8px 18px",cursor:"pointer"}}><Share2 size={14}/> Share</button>
+            <button style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",fontWeight:600,color:"#fff",background:"#0EA5E9",border:"none",borderRadius:"24px",padding:"8px 18px",cursor:"pointer"}}><Share2 size={14}/> Tweet</button>
+          </div>
+        </div>
+      </div>
+
+      {/* ===== CITED PROVISIONS (notes) ===== */}
+      <div style={{background:"#F4F5F7",marginTop:"56px",borderTop:"1px solid rgba(15,23,42,0.06)"}}>
+        <div style={{maxWidth:"820px",margin:"0 auto",padding:"44px 28px 52px"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"10px",marginBottom:"32px"}}>
+            <h2 style={{fontFamily:serif,fontSize:"22px",fontWeight:700,color:"#0F172A",margin:0}}>Cited Provisions</h2>
+            <span style={{fontSize:"12px",fontWeight:700,color:"#fff",background:"#1D4ED8",borderRadius:"50%",width:"22px",height:"22px",display:"flex",alignItems:"center",justifyContent:"center"}}>{CITED_PROVISIONS.length}</span>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:"20px"}}>
+            {CITED_PROVISIONS.map((c,i)=>(
+              <div key={i} style={{display:"flex",gap:"14px"}}>
+                <div style={{width:"38px",height:"38px",borderRadius:"50%",background:"#fff",border:"1px solid rgba(15,23,42,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px",flexShrink:0}}>{c.flag}</div>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"5px"}}>
+                    <span style={{fontSize:"12px",fontWeight:700,letterSpacing:"0.04em",textTransform:"uppercase",color:"#0F172A"}}>{c.src}</span>
+                    <span style={{fontSize:"11px",color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{c.date}</span>
+                  </div>
+                  <p style={{fontSize:"14px",lineHeight:1.65,color:"#475569",margin:"0 0 6px",fontFamily:serif}}>{c.note}</p>
+                  <span style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"#1D4ED8",cursor:"default"}}>View Source</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ===== RELATED ANALYSIS (dark) ===== */}
+      <div style={{background:"#1F2937"}}>
+        <div style={{maxWidth:"1080px",margin:"0 auto",padding:"48px 28px 56px"}}>
+          <h2 style={{fontFamily:serif,fontSize:"22px",fontWeight:700,color:"#fff",textAlign:"center",margin:"0 0 32px"}}>Related Analysis</h2>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"22px"}}>
+            {RELATED_ARTICLES.map((a,i)=>(
+              <a key={i} href="#" onClick={e=>e.preventDefault()} style={{display:"block",textDecoration:"none",borderRadius:"8px",overflow:"hidden",background:"#fff"}}>
+                <div style={{height:"130px",background:"linear-gradient(135deg,"+a.grad[0]+","+a.grad[1]+")",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+                  <FileText size={34} style={{color:"rgba(15,23,42,0.18)"}}/>
+                  <span style={{position:"absolute",top:"12px",left:"12px",fontSize:"10px",fontWeight:700,letterSpacing:"0.05em",textTransform:"uppercase",color:"#fff",background:a.catColor,padding:"4px 9px",borderRadius:"4px"}}>{a.cat}</span>
+                </div>
+                <div style={{padding:"16px 18px 18px"}}>
+                  <h3 style={{fontFamily:serif,fontSize:"16px",fontWeight:700,color:"#0F172A",margin:"0 0 12px",lineHeight:1.4}}>{a.title}</h3>
+                  <span style={{display:"inline-flex",alignItems:"center",gap:"5px",fontSize:"11px",fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:a.catColor}}>Read More <ChevronRight size={13}/></span>
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ===== FOOTER ===== */}
+      <div style={{background:"#111827",color:"rgba(255,255,255,0.7)"}}>
+        <div style={{maxWidth:"1080px",margin:"0 auto",padding:"28px",display:"flex",alignItems:"center",gap:"24px",borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
+          <span style={{fontFamily:serif,fontSize:"18px",fontWeight:700,color:"#fff"}}>AILA Legal</span>
+          <div style={{flex:1,display:"flex",gap:"24px"}}>
+            {["PRIVACY","FINTECH","AI","CROSS-BORDER","ADVISORIES"].map(t=>(<span key={t} style={{fontSize:"11px",fontWeight:600,letterSpacing:"0.08em"}}>{t}</span>))}
+          </div>
+          <div style={{display:"flex",gap:"8px"}}>
+            {["f","t","in"].map(s=>(<span key={s} style={{width:"24px",height:"24px",borderRadius:"50%",border:"1px solid rgba(255,255,255,0.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"10px"}}>{s}</span>))}
+          </div>
+        </div>
+        <div style={{maxWidth:"1080px",margin:"0 auto",padding:"28px",display:"flex",alignItems:"center",justifyContent:"center",gap:"14px"}}>
+          <span style={{fontSize:"13px",color:"rgba(255,255,255,0.8)"}}>Subscribe to regulatory alerts</span>
+          <input placeholder="Your email address" style={{background:"rgba(255,255,255,0.08)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:"6px",padding:"9px 14px",fontSize:"13px",color:"#fff",outline:"none",width:"240px"}}/>
+          <button onClick={onBack} style={{fontSize:"12px",fontWeight:700,letterSpacing:"0.08em",color:"#fff",background:"#1D4ED8",border:"none",borderRadius:"6px",padding:"10px 20px",cursor:"pointer"}}>SIGN UP</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SMEAssistant({ onAsk }: { onAsk: (q: string) => void }) {
   const [msgs,setMsgs]=useState<ChatMsg[]>(INIT_MSGS);
   const [input,setInput]=useState("");
+  const [pending,setPending]=useState(false);
   const end=useRef<HTMLDivElement>(null);
-  useEffect(()=>{ end.current?.scrollIntoView({behavior:"smooth"}); },[msgs]);
+  useEffect(()=>{ end.current?.scrollIntoView({behavior:"smooth"}); },[msgs,pending]);
 
   const send=()=>{
-    if (!input.trim()) return;
+    if (!input.trim()||pending) return;
     const q=input.trim();
     setInput("");
-
-    setMsgs((m: ChatMsg[])=>{
-      const next=[...m,{role:"user",text:q} as ChatMsg];
-      return [...next,{role:"ai",text:"Typing…"} as ChatMsg];
-    });
-
-    const delayMs=2200; // 2–3s
-    setTimeout(()=>{
-      setMsgs((m: ChatMsg[])=>{
-        if (m.length===0) return [{role:"ai",text:SME_ASSISTANT_FIXED_RESPONSE}];
-        const last=m[m.length-1];
-        if (last?.role==="ai" && last.text==="Typing…") {
-          return [...m.slice(0,-1),{role:"ai",text:SME_ASSISTANT_FIXED_RESPONSE}];
-        }
-        return [...m,{role:"ai",text:SME_ASSISTANT_FIXED_RESPONSE}];
-      });
-    },delayMs);
+    setMsgs(m=>[...m,{role:"user",text:q}]);
+    setPending(true);
+    // brief "analyzing" beat, then redirect to the full answer page
+    setTimeout(()=>{ setPending(false); onAsk(q); },1400);
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8 flex flex-col h-full" style={{height:"calc(100vh - 80px)"}}>
+    <div className="max-w-3xl mx-auto px-6 py-8 flex flex-col" style={{height:"calc(100vh - 56px)"}}>
       <div className="flex items-center gap-3 mb-4">
         <MessageSquare size={18} style={{color:"#3B82F6"}}/>
-        <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>SME Assistant</h1>
+        <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Legal Research Assistant</h1>
         <div className="ml-auto flex items-center gap-2 text-xs px-2.5 py-1 rounded-full"
           style={{background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.2)",color:"#10B981"}}>
-          <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"/>Compliance Score: 87%
+          <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"/>ASEAN corpus loaded
         </div>
       </div>
 
       <div className="flex gap-2 mb-4 flex-wrap">
-        {["What data can I collect?","Cross-border transfer rules","Fintech licensing in SG","AI regulation requirements"].map(q=>(
+        {["Can I store health data offshore?","Cross-border transfer rules","Fintech licensing in SG","AI regulation requirements"].map(q=>(
           <button key={q} onClick={()=>setInput(q)}
             className="text-xs px-3 py-1.5 rounded-full transition-colors"
             style={{background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.2)",color:"#1D4ED8"}}>
@@ -1541,32 +2049,49 @@ function SMEAssistant() {
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto space-y-4 pr-2" style={{minHeight:0}}>
-        {msgs.map((m: ChatMsg,i: number)=>(
+      <div className="flex-1 overflow-y-auto space-y-4 pr-1" style={{minHeight:0}}>
+        {msgs.map((m,i)=>(
           <div key={i} className={`flex gap-3 ${m.role==="user"?"justify-end":""}`}>
             {m.role==="ai"&&(
               <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-                style={{background:"rgba(59,130,246,0.2)",border:"1px solid rgba(59,130,246,0.35)"}}>
+                style={{background:"rgba(59,130,246,0.15)",border:"1px solid rgba(59,130,246,0.3)"}}>
                 <Brain size={13} style={{color:"#60A5FA"}}/>
               </div>
             )}
-            <div className={`max-w-lg rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line ${m.role==="user"?"rounded-tr-sm":"rounded-tl-sm"}`}
-              style={{background:m.role==="user"?"rgba(30,64,175,0.08)":"#ffffff",border:`1px solid ${m.role==="user"?"rgba(30,64,175,0.18)":"rgba(0,0,0,0.07)"}`,color:"#1E293B"}}>
+            <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${m.role==="user"?"max-w-sm rounded-tr-sm":"max-w-lg rounded-tl-sm"}`}
+              style={{background:m.role==="user"?"rgba(30,64,175,0.07)":"#ffffff",border:`1px solid ${m.role==="user"?"rgba(30,64,175,0.15)":"rgba(0,0,0,0.07)"}`,color:"#1E293B"}}>
               {m.text}
             </div>
           </div>
         ))}
+        {pending&&(
+          <div className="flex gap-3">
+            <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+              style={{background:"rgba(59,130,246,0.15)",border:"1px solid rgba(59,130,246,0.3)"}}>
+              <Brain size={13} style={{color:"#60A5FA"}}/>
+            </div>
+            <div className="rounded-2xl rounded-tl-sm px-4 py-3 text-sm flex items-center gap-2.5"
+              style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.07)",color:"#64748B"}}>
+              <span style={{display:"flex",gap:"3px",alignItems:"center"}}>
+                {[0,1,2].map(k=>(
+                  <span key={k} style={{width:"5px",height:"5px",borderRadius:"50%",background:"#60A5FA",display:"inline-block",animation:`pulse 1.2s ease-in-out ${k*0.2}s infinite`}}/>
+                ))}
+              </span>
+              Researching ASEAN corpus & your documents…
+            </div>
+          </div>
+        )}
         <div ref={end}/>
       </div>
 
       <div className="mt-4 flex gap-2">
         <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()}
-          placeholder="Ask about regulatory requirements, compliance, or specific laws..."
-          className="flex-1 rounded-xl px-4 py-3 text-sm outline-none transition-colors"
+          placeholder="Ask about regulatory requirements, compliance obligations, or specific laws..."
+          className="flex-1 rounded-xl px-4 py-3 text-sm outline-none"
           style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.1)",color:"#0F172A",fontFamily:"Inter, sans-serif"}}/>
         <button onClick={send}
-          className="px-4 py-3 rounded-xl flex items-center justify-center transition-all"
-          style={{background:"rgba(59,130,246,0.85)",border:"1px solid rgba(59,130,246,0.5)"}}>
+          className="px-4 py-3 rounded-xl flex items-center justify-center"
+          style={{background:"#1D4ED8",border:"1px solid rgba(29,78,216,0.5)"}}>
           <Send size={16} style={{color:"#fff"}}/>
         </button>
       </div>
@@ -1773,6 +2298,7 @@ function SettingsView() {
 export default function App() {
   const [view,setView]=useState<ViewId>("dashboard");
   const [selNode,setSelNode]=useState<GNode|null>(null);
+  const [query,setQuery]=useState("");
   const isDash=view==="dashboard"||view==="graph";
 
   const onNav=(v:ViewId)=>{
@@ -1780,13 +2306,15 @@ export default function App() {
     if (v==="dashboard"||v==="graph") setSelNode(null);
   };
 
+  const onAsk=(q:string)=>{ setQuery(q); setView("answer"); };
+
   const onGraphSelect=(n:GNode|null)=>{
     if (!isDash) return;
     setSelNode(n);
   };
 
   return (
-    <div className="relative w-full h-screen overflow-hidden" style={{background:"#0f0f0f",fontFamily:"Inter, sans-serif"}}>
+    <div className="relative w-full h-screen overflow-hidden" style={{background:"#FFFFFF",fontFamily:"Inter, sans-serif"}}>
       <RegulatoryGraph onSelect={onGraphSelect} selId={selNode?.id||null} dimmed={!isDash} simulateAction={{tick:0,step:"crawler"}}/>
 
       <TopNav cur={view} onNav={onNav}/>
@@ -1798,7 +2326,7 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {!isDash&&(
+        {!isDash&&view!=="answer"&&(
           <motion.div key={view}
             initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-12}}
             transition={{duration:0.28,ease:"easeOut"}}
@@ -1806,7 +2334,7 @@ export default function App() {
             style={{background:"rgba(248,250,252,0.99)",paddingTop:"56px"}}>
             {view==="simulation"&&<SimulationSandbox/>}
             {view==="memory"&&<MemoryLayer/>}
-            {view==="sme"&&<SMEAssistant/>}
+            {view==="sme"&&<SMEAssistant onAsk={onAsk}/>}
             {view==="settings"&&<SettingsView/>}
             {view==="diff"&&<DiffEngine/>}
             {view==="countries"&&<CountriesView/>}
@@ -1815,10 +2343,22 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Full-page answer redirect */}
+      <AnimatePresence>
+        {view==="answer"&&(
+          <motion.div key="answer"
+            initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} exit={{opacity:0,y:14}}
+            transition={{duration:0.3,ease:"easeOut"}}
+            className="absolute inset-0 z-50">
+            <AnswerPage query={query} onBack={()=>setView("sme")}/>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {isDash && !selNode &&(
         <div className="absolute bottom-1/2 left-1/2 -translate-x-1/2 translate-y-1/2 pointer-events-none select-none text-center"
-          style={{opacity:0.22}}>
-          <p className="text-xs tracking-widest uppercase" style={{color:"rgba(255,255,255,0.32)",fontFamily:"IBM Plex Sans, sans-serif"}}>
+          style={{opacity:0.5}}>
+          <p className="text-xs tracking-widest uppercase" style={{color:"rgba(100,116,139,0.7)",fontFamily:"IBM Plex Sans, sans-serif"}}>
             Click any node to inspect · Drag to rotate · Scroll to zoom
           </p>
         </div>

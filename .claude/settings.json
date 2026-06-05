@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npx tsx *)",
+      "Bash(python3 -)",
+      "Bash(echo \"tsc exit: $?\")",
+      "Bash(echo \"exit $?\")",
+      "Bash(python3 -c \"s=open\\('src/app/App.tsx',encoding='utf-8'\\).read\\(\\);print\\(s.count\\(chr\\(0x201c\\)\\)+s.count\\(chr\\(0x201d\\)\\)\\)\")"
+    ]
+  }
+}

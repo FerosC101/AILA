@@ -42,3 +42,17 @@ Set `VITE_AILA_API_BASE_URL` when the backend is ready.
 - `GET /status`
 - `GET /alerts`
 
+## Backend
+
+A Node + Express + TypeScript backend lives in [`server/`](server/). It implements
+the contract above **and** scrapes digital-trade regulations from a curated source
+list at [`server/sources/digital-trade-regulations.md`](server/sources/digital-trade-regulations.md).
+
+```bash
+cd server && npm install && npm run dev   # http://localhost:8787
+```
+
+Then set `VITE_AILA_API_BASE_URL=http://localhost:8787` in a root `.env.local`.
+Scraping routes: `GET /sources`, `GET /scrape/:id`, `POST /scrape`. See
+[`server/README.md`](server/README.md) for details.
+
