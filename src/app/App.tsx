@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import ailaLogo from "../assets/aila-logo.png";
 import {
   Network, GitBranch, FlaskConical, Database,
   Globe, MessageSquare, Code2, Settings, X,
@@ -8,7 +9,7 @@ import {
   Send,
   Link,
   FileText, Scale,
-  Search, Menu, Heart, Share2, ChevronLeft, Eye, MessageCircle,
+  Heart, Share2, ChevronLeft, Eye, MessageCircle,
 } from "lucide-react";
 
 // ==================== TYPES ====================
@@ -30,6 +31,7 @@ interface GNode {
   glowColor: string;
   pulsePhase: number;
   alerting?: boolean;
+  url?: string;
   details?: {
     category: string; enacted: string;
     status: "Active" | "Amended" | "Repealed" | "Proposed";
@@ -156,14 +158,6 @@ const COUNTRY_DATA: Record<string, {
   },
 };
 
-const CROSS_LINKS: Array<[string, string, EdgeType]> = [
-  ["sg-pdpa", "ph-dpa", "precedent"],
-  ["th-pdpa", "id-pdp", "precedent"],
-  ["my-pdpa", "sg-pdpa", "precedent"],
-  ["vn-csl", "th-cca", "precedent"],
-  ["id-ojk", "sg-psa", "simulation"],
-  ["ph-dpa", "my-pdpa", "amendment"],
-];
 
 const LIVE_EVENTS: LiveEvent[] = [
   { type: "alert", text: "VN Cybersecurity Law amendment detected", time: "00:12" },
@@ -186,94 +180,6 @@ function lighten(hex: string, amt: number): string {
   return `rgb(${Math.min(255, parseInt(hex.slice(1,3),16)+amt)},${Math.min(255, parseInt(hex.slice(3,5),16)+amt)},${Math.min(255, parseInt(hex.slice(5,7),16)+amt)})`;
 }
 
-// ==================== GRAPH INIT ====================
-function initGraph(w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
-  const sphere = Math.min(w, h) * 0.34;
-  const nodes: GNode[] = [], edges: GEdge[] = [];
-  const keys = Object.keys(COUNTRY_DATA);
-
-  keys.forEach((key, i) => {
-    const angle = (i / keys.length) * Math.PI * 2 - Math.PI / 2;
-    const data = COUNTRY_DATA[key];
-    const nx = sphere * Math.cos(angle) * 0.9;
-    const ny = sphere * Math.sin(angle * 1.3) * 0.45;
-    const nz = sphere * Math.sin(angle) * 0.82;
-
-    nodes.push({
-      id: key, type: "country", label: data.name, flag: data.flag,
-      x: nx + (Math.random()-.5)*16, y: ny + (Math.random()-.5)*16, z: nz + (Math.random()-.5)*24,
-      vx: 0, vy: 0, vz: 0, radius: 26, color: data.color, glowColor: data.color,
-      pulsePhase: Math.random() * Math.PI * 2,
-      details: {
-        category: "Jurisdiction", enacted: "N/A", status: "Active",
-        clauses: 0, amendments: 0, coverage: data.name, confidence: 1,
-        description: `${data.name} regulatory jurisdiction tracking ${data.regulations.length} active legislative instruments across digital trade and data governance.`,
-        regulations: data.regulations.length, complianceScore: 0.75 + Math.random() * 0.22,
-      },
-    });
-
-    data.regulations.forEach((reg, j) => {
-      const ra = angle + (j - 1) * 0.68;
-      const rr = 108;
-      const rx = nx + rr * Math.cos(ra);
-      const ry = ny + rr * Math.sin(ra) * 0.92;
-      const rz = nz + rr * Math.sin(ra * 0.8) * 0.7;
-      nodes.push({
-        id: reg.id, type: "regulation", label: reg.label, shortLabel: reg.short,
-        countryId: key,
-        x: rx+(Math.random()-.5)*12, y: ry+(Math.random()-.5)*12, z: rz+(Math.random()-.5)*16,
-        vx: 0, vy: 0, vz: 0, radius: 13, color: data.color, glowColor: data.color,
-        pulsePhase: Math.random() * Math.PI * 2,
-        details: {
-          category: reg.category, enacted: reg.enacted, status: "Active",
-          clauses: reg.clauses, amendments: reg.amendments, coverage: data.name,
-          confidence: 0.83 + Math.random() * 0.15,
-          description: `${reg.label} establishes the regulatory framework for ${reg.category.toLowerCase()} activities in ${data.name}, enforced by national agencies with cross-border implications.`,
-        },
-      });
-      edges.push({
-        id: `${key}-${reg.id}`, sourceId: key, targetId: reg.id, type: "cluster",
-        particles: Array.from({length: 2}, () => ({ progress: Math.random(), speed: 0.0018+Math.random()*0.0025, opacity: 0.75 })),
-      });
-      for (let c = 0; c < 2; c++) {
-        const ca = ra + (c-.5)*0.95, cr = 52, clId = `${reg.id}-c${c}`;
-        nodes.push({
-          id: clId, type: "clause", label: `§${c+1}`, countryId: key,
-          x: rx+cr*Math.cos(ca)+(Math.random()-.5)*8,
-          y: ry+cr*Math.sin(ca)*0.9+(Math.random()-.5)*8,
-          z: rz+cr*Math.sin(ca*1.25)*0.42+(Math.random()-.5)*8,
-          vx: 0, vy: 0, vz: 0, radius: 6, color: data.color, glowColor: "#22D3EE",
-          pulsePhase: Math.random()*Math.PI*2,
-        });
-        edges.push({
-          id: `${reg.id}-${clId}`, sourceId: reg.id, targetId: clId, type: "cluster",
-          particles: [{progress: Math.random(), speed: 0.003+Math.random()*0.004, opacity: 0.5}],
-        });
-      }
-    });
-  });
-
-  const vnCsl = nodes.find(n => n.id === "vn-csl")!;
-  nodes.push({
-    id: "vn-amend", type: "amendment", label: "CSL Amendment 2024", shortLabel: "Amend.",
-    countryId: "vn", x: vnCsl.x+85, y: vnCsl.y-35, z: vnCsl.z+42, vx: 0, vy: 0, vz: 0, radius: 9,
-    color: "#F59E0B", glowColor: "#F59E0B", pulsePhase: Math.random()*Math.PI*2, alerting: true,
-    details: {
-      category: "Amendment", enacted: "2024", status: "Proposed",
-      clauses: 12, amendments: 0, coverage: "Vietnam", confidence: 0.91,
-      description: "Proposed amendment expanding cross-border data flow restrictions and introducing mandatory AI audit requirements for digital platforms operating in Vietnam.",
-    },
-  });
-  edges.push({ id: "vn-amend-e", sourceId: "vn-csl", targetId: "vn-amend", type: "amendment",
-    particles: [{progress: Math.random(), speed: 0.005, opacity: 1}] });
-
-  CROSS_LINKS.forEach(([s, t, type]) => {
-    edges.push({ id: `x-${s}-${t}`, sourceId: s, targetId: t, type,
-      particles: [{progress: Math.random(), speed: 0.0012, opacity: 0.9}] });
-  });
-
-  return { nodes, edges };
-}
 
 // ==================== LIVE GRAPH (from backend /graph) ====================
 type ApiGraphNode = {
@@ -295,19 +201,23 @@ const shortLabelFor = (label: string) => {
   return label.length > 16 ? label.slice(0, 15) + "…" : label;
 };
 
-// Pillar palette — the two governance pillars get distinct hues; everything else grey.
-const PILLAR_COLORS: Record<string, string> = {
-  "Cross-border data policies": "#06B6D4",        // cyan
-  "Domestic data protection & privacy": "#8B5CF6", // violet
+// Monochrome palette — a black→grey ramp; darker = higher in the hierarchy.
+const NODE_PALETTE = {
+  country: "#1E293B",     // slate-800 — near-black anchor hub
+  pillarless: "#94A3B8",  // slate-400 — sources with no pillar
 };
-const pillarColor = (name?: string) => (name && PILLAR_COLORS[name]) || "#94A3B8";
+const PILLAR_COLORS: Record<string, string> = {
+  "Cross-border data policies": "#334155",         // slate-700
+  "Domestic data protection & privacy": "#64748B",  // slate-500
+};
+const pillarColor = (name?: string) => (name && PILLAR_COLORS[name]) || NODE_PALETTE.pillarless;
 const pillarShort = (name: string) => name.replace(/ data policies| data protection.*/i, "").trim();
 
 /** Convert the backend /graph payload into positioned GNode/GEdge (country → pillar → URL). */
 function graphFromApi(payload: ApiGraph, w: number, h: number): { nodes: GNode[]; edges: GEdge[] } {
-  const sphere = Math.min(w, h) * 0.34;
+  const sphere = Math.min(w, h) * 0.46;
   const nodes: GNode[] = [], edges: GEdge[] = [];
-  const jit = (m = 14) => (Math.random() - 0.5) * m;
+  const jit = (m = 18) => (Math.random() - 0.5) * m;
 
   const byId = new Map(payload.nodes.map(n => [n.id, n]));
   const children = new Map<string, string[]>();
@@ -328,16 +238,17 @@ function graphFromApi(payload: ApiGraph, w: number, h: number): { nodes: GNode[]
   const placeReg = (r: ApiGraphNode, cx: number, cy: number, cz: number, baseAngle: number, idx: number, n: number, color: string) => {
     if (placedRegs.has(r.id)) return;
     placedRegs.add(r.id);
-    const ra = baseAngle + (n > 1 ? (idx / (n - 1) - 0.5) * 1.1 : 0);
-    const rr = 52 + (idx % 3) * 14;
+    const ra = baseAngle + (n > 1 ? (idx / (n - 1) - 0.5) * 1.4 : 0);
+    const rr = 70 + (idx % 3) * 20;
     nodes.push({
       id: r.id, type: "regulation", label: r.label, shortLabel: shortLabelFor(r.label),
       x: cx + rr * Math.cos(ra) + jit(), y: cy + rr * Math.sin(ra) * 0.9 + jit(), z: cz + rr * Math.sin(ra * 0.8) * 0.7 + jit(),
       vx: 0, vy: 0, vz: 0, radius: 10, color, glowColor: color, pulsePhase: Math.random() * Math.PI * 2,
+      url: r.url,
       details: {
         category: r.coverage || "Regulation", enacted: r.timeframe || "N/A", status: "Active",
         clauses: r.policies?.length ?? 0, amendments: 0, coverage: r.country, confidence: 0.9,
-        description: `${r.instrument}\n\nPillars: ${(r.pillars ?? []).join(", ") || "—"}\nPolicy focus: ${(r.policies ?? []).join("; ") || "—"}\nSource: ${r.url ?? ""}`,
+        description: `${r.instrument}\n\nPillars: ${(r.pillars ?? []).join(", ") || "—"}\nPolicy focus: ${(r.policies ?? []).join("; ") || "—"}`,
       },
     });
   };
@@ -355,7 +266,7 @@ function graphFromApi(payload: ApiGraph, w: number, h: number): { nodes: GNode[]
     nodes.push({
       id: c.id, type: "country", label: c.label, flag: flagFor(c.country),
       x: nx + jit(), y: ny + jit(), z: nz + jit(), vx: 0, vy: 0, vz: 0,
-      radius: 26, color: "#64748B", glowColor: "#64748B", pulsePhase: Math.random() * Math.PI * 2,
+      radius: 26, color: NODE_PALETTE.country, glowColor: NODE_PALETTE.country, pulsePhase: Math.random() * Math.PI * 2,
       details: {
         category: "Jurisdiction", enacted: "N/A", status: "Active",
         clauses: 0, amendments: 0, coverage: c.label, confidence: 1,
@@ -370,7 +281,7 @@ function graphFromApi(payload: ApiGraph, w: number, h: number): { nodes: GNode[]
     // pillar sub-hubs around the country
     pillarKids.forEach((pl, pIdx) => {
       const pa = angle + (pillarKids.length > 1 ? (pIdx / (pillarKids.length - 1) - 0.5) * 1.0 : 0);
-      const pr = 96;
+      const pr = 130;
       const px = nx + pr * Math.cos(pa), py = ny + pr * Math.sin(pa) * 0.92, pz = nz + pr * Math.sin(pa * 0.8) * 0.7;
       const col = pillarColor(pl.pillar);
       nodes.push({
@@ -392,9 +303,9 @@ function graphFromApi(payload: ApiGraph, w: number, h: number): { nodes: GNode[]
       });
     });
 
-    // regulations with no pillar hang directly off the country hub (grey)
+    // regulations with no pillar hang directly off the country hub (indigo tint)
     regKids.forEach((r, j) => {
-      placeReg(r, nx, ny, nz, angle, j, regKids.length, "#94A3B8");
+      placeReg(r, nx, ny, nz, angle, j, regKids.length, NODE_PALETTE.pillarless);
       pushEdge(c.id, r.id);
     });
   });
@@ -404,8 +315,8 @@ function graphFromApi(payload: ApiGraph, w: number, h: number): { nodes: GNode[]
 
 // ==================== FORCE SIMULATION ====================
 function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
-  const radius = Math.min(w, h) * 0.34;
-  const REP = 3900, CK = 0.07, XK = 0.016, GR = 0.00045, D = 0.88;
+  const radius = Math.min(w, h) * 0.46;
+  const REP = 6200, CK = 0.07, XK = 0.016, GR = 0.00038, D = 0.88;
   nodes.forEach(n => {
     n.vx += (-n.x) * GR;
     n.vy += (-n.y) * GR;
@@ -415,7 +326,7 @@ function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
     for (let j = i+1; j < nodes.length; j++) {
       const dx=nodes[j].x-nodes[i].x, dy=nodes[j].y-nodes[i].y, dz=nodes[j].z-nodes[i].z;
       const d2=dx*dx+dy*dy+dz*dz||1, d=Math.sqrt(d2);
-      if (d < (nodes[i].radius+nodes[j].radius+20)*3.5) {
+      if (d < (nodes[i].radius+nodes[j].radius+24)*4.6) {
         const f=REP/d2;
         nodes[i].vx-=(dx/d)*f; nodes[i].vy-=(dy/d)*f; nodes[i].vz-=(dz/d)*f;
         nodes[j].vx+=(dx/d)*f; nodes[j].vy+=(dy/d)*f; nodes[j].vz+=(dz/d)*f;
@@ -428,7 +339,7 @@ function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
     if (!s||!t) return;
     const dx=t.x-s.x, dy=t.y-s.y, dz=t.z-s.z;
     const d=Math.sqrt(dx*dx+dy*dy+dz*dz)||1;
-    const rest=e.type==="cluster"?(s.type==="country"?122:62):265;
+    const rest=e.type==="cluster"?(s.type==="country"?150:78):265;
     const k=e.type==="cluster"?CK:XK, f=(d-rest)*k;
     s.vx+=(dx/d)*f; s.vy+=(dy/d)*f; s.vz+=(dz/d)*f;
     t.vx-=(dx/d)*f; t.vy-=(dy/d)*f; t.vz-=(dz/d)*f;
@@ -441,7 +352,7 @@ function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
     n.z+=n.vz;
 
     const d = Math.sqrt(n.x*n.x + n.y*n.y + n.z*n.z) || 1;
-    const maxD = radius * 1.08;
+    const maxD = radius * 1.25;
     if (d > maxD) {
       const s = maxD / d;
       n.x *= s; n.y *= s; n.z *= s;
@@ -499,7 +410,8 @@ function drawGraph(
   w: number, h: number,
   hovId: string|null, selId: string|null,
   time: number, dimmed: boolean,
-  view: GraphView
+  view: GraphView,
+  scanId: string|null, scanGlow: number
 ): Record<string, ProjNode> {
   ctx.clearRect(0,0,w,h);
   ctx.globalAlpha = dimmed ? 0.22 : 1;
@@ -558,11 +470,11 @@ function drawGraph(
       return;
     }
 
-    // Country: subtle breathing outer ring
+    // Country: subtle breathing outer ring in its own hue
     if (n.type==="country") {
       ctx.save();
       ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+6+pulse*3,0,Math.PI*2);
-      ctx.strokeStyle=h2r(NC_DARK,0.22+pulse*0.08); ctx.lineWidth=1; ctx.stroke();
+      ctx.strokeStyle=h2r(n.color,0.26+pulse*0.1); ctx.lineWidth=1; ctx.stroke();
       ctx.restore();
     }
 
@@ -583,23 +495,38 @@ function drawGraph(
       ctx.restore();
     }
 
-    // Node fill — country grey, pillars & their regulations carry the pillar colour
-    const accent = n.type==="country" ? NC_DARK : n.color;
+    // Ambient scan highlight — the "found" node lights up navy with expanding rings
+    if (n.id===scanId && scanGlow>0.02) {
+      ctx.save();
+      // soft filled halo
+      const halo=ctx.createRadialGradient(pn.x,pn.y,pn.r,pn.x,pn.y,pn.r+10+scanGlow*26);
+      halo.addColorStop(0,`rgba(30,58,95,${0.28*scanGlow})`);
+      halo.addColorStop(1,"rgba(30,58,95,0)");
+      ctx.fillStyle=halo;
+      ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+10+scanGlow*26,0,Math.PI*2); ctx.fill();
+      // expanding pulse ring
+      ctx.shadowColor="#1E3A5F"; ctx.shadowBlur=26*scanGlow;
+      ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+5+scanGlow*22,0,Math.PI*2);
+      ctx.strokeStyle=`rgba(30,58,95,${0.8*scanGlow})`; ctx.lineWidth=2; ctx.stroke();
+      // bright inner ring hugging the node
+      ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r+2,0,Math.PI*2);
+      ctx.strokeStyle=`rgba(30,58,95,${0.9*scanGlow})`; ctx.lineWidth=2; ctx.stroke();
+      ctx.restore();
+    }
+
+    // Node fill — every tier carries its own hue from the shared palette
+    const accent = n.color;
     ctx.save();
     if (isS||isH) { ctx.shadowColor=h2r(accent,0.6); ctx.shadowBlur=isS?18:10; }
     ctx.beginPath(); ctx.arc(pn.x,pn.y,pn.r,0,Math.PI*2);
-    if (n.type==="country") {
+    if (n.type==="country"||n.type==="pillar") {
       const gr=ctx.createRadialGradient(pn.x-pn.r*0.28,pn.y-pn.r*0.28,0,pn.x,pn.y,pn.r);
-      gr.addColorStop(0,lighten(NC_DARK,30)); gr.addColorStop(1,NC_DARK);
-      ctx.fillStyle=gr;
-    } else if (n.type==="pillar") {
-      const gr=ctx.createRadialGradient(pn.x-pn.r*0.28,pn.y-pn.r*0.28,0,pn.x,pn.y,pn.r);
-      gr.addColorStop(0,lighten(n.color,34)); gr.addColorStop(1,n.color);
+      gr.addColorStop(0,lighten(n.color,n.type==="country"?30:34)); gr.addColorStop(1,n.color);
       ctx.fillStyle=gr;
     } else if (n.type==="regulation") {
       ctx.fillStyle=h2r(n.color,isS||isH?0.95:0.72);
     } else {
-      ctx.fillStyle=h2r(NC_DARK,0.85); // amendment: darker grey
+      ctx.fillStyle=h2r(n.color,0.85); // amendment
     }
     ctx.fill();
     // Thin ring on everything except country
@@ -628,17 +555,20 @@ function drawGraph(
       ctx.fillStyle=`rgba(239,68,68,${0.8+ap*0.2})`; ctx.fill(); ctx.restore();
     }
 
-    // Obsidian-style labels: clean floating text, no pill background
+    // Labels: hubs (country / pillar) always on; URL titles only on hover/focus
+    // (keeps the field readable instead of a wall of overlapping text).
     const isHub=n.type==="country"||n.type==="pillar";
-    const showLabel=isHub||isH||isS;
-    if (showLabel) {
+    if (isHub || isH || isS || (n.id===scanId && scanGlow>0.45)) {
       const label=n.shortLabel||n.label;
       const fs=n.type==="country"?11:n.type==="pillar"?10:9;
       ctx.save();
       ctx.font=`${isHub?"600 ":"400 "}${fs}px Inter, sans-serif`;
       ctx.textAlign="center"; ctx.textBaseline="top";
-      ctx.shadowColor="rgba(255,255,255,0.9)"; ctx.shadowBlur=4;
-      ctx.fillStyle=n.type==="country"?"#1E293B":n.type==="pillar"?n.color:"rgba(71,85,105,0.92)";
+      ctx.shadowColor="rgba(255,255,255,0.95)"; ctx.shadowBlur=5;
+      ctx.fillStyle=
+        n.type==="country" ? "#1E293B"
+        : n.type==="pillar" ? n.color
+        : h2r("#334155", isS?1:0.92);
       ctx.fillText(label,pn.x,pn.y+pn.r+6);
       ctx.restore();
     }
@@ -651,6 +581,7 @@ function drawGraph(
 interface GRef {
   nodes:GNode[]; edges:GEdge[]; hovId:string|null; dragId:string|null;
   selId:string|null; time:number; w:number; h:number; init:boolean; raf:number; dimmed:boolean;
+  scanId:string|null; scanStart:number;
   projected: Record<string, ProjNode>;
   rotateMode: boolean;
   moved: number;
@@ -678,9 +609,11 @@ function RegulatoryGraph({
   simulateAction: SimulateAction;
 }) {
   const cvs = useRef<HTMLCanvasElement>(null);
+  const [loadState,setLoadState]=useState<"loading"|"ready"|"empty"|"error">("loading");
   const gr = useRef<GRef>({
     nodes:[], edges:[], hovId:null, dragId:null,
     selId:null, time:0, w:0, h:0, init:false, raf:0, dimmed:false,
+    scanId:null, scanStart:0,
     projected:{}, rotateMode:false, moved:0, lastMx:0, lastMy:0,
     view:{ yaw:0.42, pitch:-0.18, zoom:1, targetYaw:0.42, targetPitch:-0.18, targetZoom:1 },
   });
@@ -720,25 +653,32 @@ function RegulatoryGraph({
   },[selId, focusNode]);
   useEffect(()=>{ gr.current.dimmed=dimmed; },[dimmed]);
 
-  // Load the live graph (countries + scraped URL nodes) from the backend when configured.
+  // Load the live graph (countries + scraped URL nodes) from the backend. The graph
+  // shows ONLY active, reachable URLs — no seeded or mock data.
+  const payloadRef = useRef<ApiGraph | null>(null);
+  const tryBuild = useCallback(()=>{
+    const p = payloadRef.current;
+    if (!p || gr.current.init || gr.current.w<=0 || gr.current.h<=0) return;
+    const { nodes, edges } = graphFromApi(p, gr.current.w, gr.current.h);
+    gr.current.nodes = nodes; gr.current.edges = edges; gr.current.init = true;
+  },[]);
+
   useEffect(()=>{
-    const base = import.meta.env.VITE_AILA_API_BASE_URL?.trim();
-    if (!base) return;
+    const base = (import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
+    if (!base) { setLoadState("error"); return; }
     let cancelled = false;
+    setLoadState("loading");
     fetch(`${base}/graph`)
       .then(r => r.json())
       .then((payload: ApiGraph) => {
-        if (cancelled || !payload?.nodes?.length) return;
-        const w = gr.current.w || window.innerWidth;
-        const h = gr.current.h || window.innerHeight;
-        const { nodes, edges } = graphFromApi(payload, w, h);
-        gr.current.nodes = nodes;
-        gr.current.edges = edges;
-        gr.current.init = true;
+        if (cancelled) return;
+        payloadRef.current = payload;
+        setLoadState(payload?.nodes?.length ? "ready" : "empty");
+        tryBuild();
       })
-      .catch(() => {/* keep seed graph on failure */});
+      .catch(() => { if (!cancelled) setLoadState("error"); });
     return ()=>{ cancelled = true; };
-  },[]);
+  },[tryBuild]);
 
   useEffect(()=>{
     if (!simulateAction.tick || !gr.current.init || gr.current.nodes.length===0) return;
@@ -829,10 +769,7 @@ function RegulatoryGraph({
     const setup=()=>{
       const w=c.offsetWidth, h=c.offsetHeight;
       c.width=w; c.height=h; gr.current.w=w; gr.current.h=h;
-      if (!gr.current.init&&w>0&&h>0) {
-        const {nodes,edges}=initGraph(w,h);
-        gr.current.nodes=nodes; gr.current.edges=edges; gr.current.init=true;
-      }
+      tryBuild(); // build from live API payload once dimensions are known (no seed/mock)
     };
     setup();
     const ro=new ResizeObserver(setup); ro.observe(c.parentElement!);
@@ -841,10 +778,20 @@ function RegulatoryGraph({
       gr.current.time+=16; tick++;
       gr.current.edges.forEach(e=>e.particles.forEach(p=>{ p.progress+=p.speed; if(p.progress>1)p.progress=0; }));
       if (tick%2===0) applyForces(gr.current.nodes,gr.current.edges,gr.current.w,gr.current.h);
-      gr.current.view.targetYaw += gr.current.rotateMode ? 0 : 0.00055;
+      gr.current.view.targetYaw += gr.current.rotateMode ? 0 : 0.004;
       gr.current.view.yaw += (gr.current.view.targetYaw - gr.current.view.yaw) * 0.14;
       gr.current.view.pitch += (gr.current.view.targetPitch - gr.current.view.pitch) * 0.14;
       gr.current.view.zoom += (gr.current.view.targetZoom - gr.current.view.zoom) * 0.1;
+
+      // Ambient "scan" — periodically light up a node, like the loader.
+      const scannable = gr.current.nodes.filter(n=>n.type==="regulation"||n.type==="pillar");
+      if (scannable.length && gr.current.time - gr.current.scanStart > 1500) {
+        gr.current.scanId = scannable[Math.floor(Math.random()*scannable.length)].id;
+        gr.current.scanStart = gr.current.time;
+      }
+      const st = gr.current.time - gr.current.scanStart;
+      const scanGlow = Math.sin(Math.min(1, st/1200) * Math.PI); // ease in/out over ~1.2s
+
       const ctx=c.getContext("2d");
       if (ctx&&gr.current.init) {
         gr.current.projected = drawGraph(
@@ -857,7 +804,9 @@ function RegulatoryGraph({
           gr.current.selId,
           gr.current.time,
           gr.current.dimmed,
-          { yaw: gr.current.view.yaw, pitch: gr.current.view.pitch, zoom: gr.current.view.zoom }
+          { yaw: gr.current.view.yaw, pitch: gr.current.view.pitch, zoom: gr.current.view.zoom },
+          gr.current.scanId,
+          scanGlow
         );
       }
       gr.current.raf=requestAnimationFrame(loop);
@@ -912,10 +861,37 @@ function RegulatoryGraph({
   },[]);
 
   return (
-    <canvas ref={cvs} className="absolute inset-0 w-full h-full"
-      onMouseMove={onMove} onMouseDown={onDown} onMouseUp={onUp}
-      onClick={onClick} onWheel={onWheel}
-      onMouseLeave={()=>{gr.current.hovId=null; gr.current.rotateMode=false;}} />
+    <>
+      <canvas ref={cvs} className="absolute inset-0 w-full h-full"
+        onMouseMove={onMove} onMouseDown={onDown} onMouseUp={onUp}
+        onClick={onClick} onWheel={onWheel}
+        onMouseLeave={()=>{gr.current.hovId=null; gr.current.rotateMode=false;}} />
+      {loadState!=="ready" && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+          <div className="text-center">
+            {loadState==="loading" && (
+              <>
+                <div className="mx-auto mb-4 w-8 h-8 rounded-full border-2 animate-spin"
+                  style={{borderColor:"rgba(15,23,42,0.12)",borderTopColor:"#1E3A5F"}}/>
+                <p className="text-xs tracking-widest uppercase" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>
+                  Fetching active regulatory sources…
+                </p>
+              </>
+            )}
+            {loadState==="empty" && (
+              <p className="text-xs tracking-widest uppercase" style={{color:"#94A3B8",fontFamily:"IBM Plex Sans, sans-serif"}}>
+                No active sources reachable
+              </p>
+            )}
+            {loadState==="error" && (
+              <p className="text-xs tracking-widest uppercase" style={{color:"#94A3B8",fontFamily:"IBM Plex Sans, sans-serif"}}>
+                Backend unavailable — set VITE_AILA_API_BASE_URL
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -948,19 +924,19 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
     {id:"api",label:"API Reference",desc:"Endpoints and authentication",icon:Code2},
   ];
 
+  const NAVY = "#1E3A5F";
   return (
     <header className="fixed top-0 left-0 right-0 z-50 flex flex-col" style={{height:"56px"}}>
-      <div style={{height:"3px",flexShrink:0,background:"linear-gradient(90deg,#1D4ED8 0%,#3B82F6 52%,#7C3AED 100%)"}}/>
+      <div style={{height:"3px",flexShrink:0,background:NAVY}}/>
       <div
         className="flex items-center flex-1 w-full px-6"
-        style={{background:"#0D1F40",borderBottom:"1px solid rgba(255,255,255,0.07)"}}
+        style={{background:"#FFFFFF",borderBottom:"1px solid #E5E9F0",boxShadow:"0 1px 2px rgba(15,23,42,0.04)"}}
       >
         <button onClick={() => onNav("dashboard")} className="flex items-center gap-3 shrink-0 mr-8">
-          <img src="/src/assets/aila-logo-2.png" alt="AILA"
-            style={{height:"27px",width:"auto",objectFit:"contain",filter:"brightness(1.1)"}}/>
+          <img src={ailaLogo} alt="AILA" style={{height:"22px",width:"auto",objectFit:"contain"}}/>
           <span
-            className="hidden md:block text-xs font-semibold tracking-widest uppercase pl-4 border-l"
-            style={{color:"rgba(255,255,255,0.36)",borderColor:"rgba(255,255,255,0.14)",fontFamily:"IBM Plex Sans, sans-serif",letterSpacing:"0.12em"}}
+            className="hidden md:block text-xs font-semibold tracking-widest uppercase pl-3 border-l"
+            style={{color:"#94A3B8",borderColor:"#E5E9F0",fontFamily:"IBM Plex Sans, sans-serif",letterSpacing:"0.12em"}}
           >
             Regulatory Intelligence
           </span>
@@ -977,7 +953,7 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
                 key={item.id}
                 onClick={() => onNav(item.id)}
                 className="flex items-center gap-2 px-4 text-sm font-medium transition-colors h-full"
-                style={{color:isA?"#93C5FD":"rgba(255,255,255,0.56)",borderBottom:isA?"2px solid #60A5FA":"2px solid transparent"}}
+                style={{color:isA?NAVY:"#64748B",borderBottom:isA?`2px solid ${NAVY}`:"2px solid transparent"}}
               >
                 <Icon size={13} />
                 {item.label}
@@ -986,13 +962,13 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
           })}
         </nav>
 
-        <div className="mx-4 shrink-0" style={{width:"1px",height:"20px",background:"rgba(255,255,255,0.12)"}} />
+        <div className="mx-4 shrink-0" style={{width:"1px",height:"20px",background:"#E5E9F0"}} />
 
         <div ref={menuRef} className="relative shrink-0 h-full flex items-center">
           <button
             onClick={() => setMenuOpen((o) => !o)}
             className="flex items-center gap-2 px-4 text-sm font-medium transition-colors h-full"
-            style={{color:toolActive?"#93C5FD":"rgba(255,255,255,0.56)",borderBottom:toolActive?"2px solid #60A5FA":"2px solid transparent"}}
+            style={{color:toolActive?NAVY:"#64748B",borderBottom:toolActive?`2px solid ${NAVY}`:"2px solid transparent"}}
           >
             <Network size={13} />
             Graph
@@ -1006,7 +982,7 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
                 initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-6}}
                 transition={{duration:0.12}}
                 className="absolute right-0 top-full w-64 rounded-lg py-1 z-50"
-                style={{marginTop:"4px",background:"#FFFFFF",border:"1px solid #E2E8F0",boxShadow:"0 8px 28px rgba(0,0,0,0.2),0 2px 8px rgba(0,0,0,0.1)"}}
+                style={{marginTop:"4px",background:"#FFFFFF",border:"1px solid #E5E9F0",boxShadow:"0 8px 28px rgba(15,23,42,0.12),0 2px 8px rgba(15,23,42,0.06)"}}
               >
                 {TOOLS.map((tool) => {
                   const Icon = tool.icon;
@@ -1016,11 +992,11 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
                       key={tool.id}
                       onClick={() => { onNav(tool.id); setMenuOpen(false); }}
                       className="w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50"
-                      style={{borderLeft:`3px solid ${isA?"#1D4ED8":"transparent"}`}}
+                      style={{borderLeft:`3px solid ${isA?NAVY:"transparent"}`}}
                     >
-                      <Icon size={14} style={{color:isA?"#1D4ED8":"#94A3B8",marginTop:"2px",flexShrink:0}}/>
+                      <Icon size={14} style={{color:isA?NAVY:"#94A3B8",marginTop:"2px",flexShrink:0}}/>
                       <div>
-                        <div className="text-sm font-medium leading-tight" style={{color:isA?"#1D4ED8":"#1E293B"}}>
+                        <div className="text-sm font-medium leading-tight" style={{color:isA?NAVY:"#1E293B"}}>
                           {tool.label}
                         </div>
                         <div className="text-xs mt-0.5" style={{color:"#94A3B8"}}>{tool.desc}</div>
@@ -1082,7 +1058,7 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
   },[mergedFeed.length]);
 
   const feed=mergedFeed.slice(feedIdx,feedIdx+3).concat(mergedFeed.slice(0,Math.max(0,3-(mergedFeed.length-feedIdx))));
-  const feedColors:{[k:string]:string}={alert:"#EF4444",diff:"#8B5CF6",verify:"#10B981",ingest:"#3B82F6",analysis:"#1D4ED8"};
+  const feedColors:{[k:string]:string}={alert:"#EF4444",diff:"#334155",verify:"#10B981",ingest:"#1E3A5F",analysis:"#1E3A5F"};
 
   return <>
     {/* Top Left */}
@@ -1091,7 +1067,7 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
       <PanelTitle>System Status</PanelTitle>
       <div className="p-3 space-y-2">
         <StatRow label="Active Jurisdictions" value="6 / 6" color="#10B981" dot="#10B981"/>
-        <StatRow label="Regulations Tracked" value={stats.regs.toLocaleString()} color="#60A5FA"/>
+        <StatRow label="Regulations Tracked" value={stats.regs.toLocaleString()} color="#475569"/>
         <StatRow label="Amendment Alerts" value={stats.amends} color={stats.amends>10?"#F59E0B":"#94A3B8"} dot={stats.amends>0?"#F59E0B":undefined}/>
         <StatRow label="Monitor Activity" value="3 active" color="#10B981" dot="#10B981"/>
         <div className="pt-1 border-t" style={{borderColor:"rgba(0,0,0,0.07)"}}>
@@ -1120,11 +1096,11 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
             <span className="text-xs font-medium" style={{color:"#10B981",fontFamily:"JetBrains Mono, monospace"}}>{stats.ragH.toFixed(1)}%</span>
           </div>
           <div className="h-1 rounded-full overflow-hidden" style={{background:"rgba(0,0,0,0.07)"}}>
-            <div className="h-full rounded-full transition-all duration-700" style={{width:`${stats.ragH}%`,background:"linear-gradient(90deg,#3B82F680,#3B82F6)"}}/>
+            <div className="h-full rounded-full transition-all duration-700" style={{width:`${stats.ragH}%`,background:"linear-gradient(90deg,#1E3A5F80,#1E3A5F)"}}/>
           </div>
         </div>
-        <StatRow label="Change Detections" value={stats.diffs} color="#8B5CF6" dot="#8B5CF6"/>
-        <StatRow label="Document Index" value={`${stats.memGb} GB`} color="#1D4ED8"/>
+        <StatRow label="Change Detections" value={stats.diffs} color="#334155" dot="#334155"/>
+        <StatRow label="Document Index" value={`${stats.memGb} GB`} color="#1E3A5F"/>
       </div>
     </motion.div>
 
@@ -1155,11 +1131,11 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
       className="absolute bottom-4 right-4 w-56 z-40" style={PANEL_STYLE}>
       <PanelTitle>Compliance Status</PanelTitle>
       <div className="p-3 space-y-2">
-        <StatRow label="Active Simulations" value="2 running" color="#1D4ED8" dot="#1D4ED8"/>
+        <StatRow label="Active Simulations" value="2 running" color="#1E3A5F" dot="#1E3A5F"/>
         <StatRow label="Regulatory Conflicts" value={stats.conflicts} color={stats.conflicts>2?"#EF4444":"#F59E0B"} dot={stats.conflicts>0?"#EF4444":undefined}/>
-        <StatRow label="Precedent Matches" value={stats.precedents} color="#8B5CF6"/>
+        <StatRow label="Precedent Matches" value={stats.precedents} color="#334155"/>
         <div className="pt-2 border-t space-y-1.5" style={{borderColor:"rgba(0,0,0,0.06)"}}>
-          {[{country:"PH Philippines",score:87,c:"#3B82F6"},{country:"SG Singapore",score:94,c:"#10B981"},{country:"VN Vietnam",score:71,c:"#EF4444"}].map(r=>(
+          {[{country:"PH Philippines",score:87,c:"#1E3A5F"},{country:"SG Singapore",score:94,c:"#10B981"},{country:"VN Vietnam",score:71,c:"#EF4444"}].map(r=>(
             <div key={r.country}>
               <div className="flex justify-between mb-0.5">
                 <span className="text-xs" style={{color:"#64748B"}}>{r.country}</span>
@@ -1177,11 +1153,29 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
 }
 
 // ==================== INTELLIGENCE DRAWER ====================
+type AIClass = { pillars:string[]; policyFocus:string[]; coverage:string; rationale:string; model:string };
 function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>void;side?:"right"|"left"}) {
   const details=node.details;
   const isC=node.type==="country";
   const cd=node.countryId?COUNTRY_DATA[node.countryId]:null;
   const ci=isC?COUNTRY_DATA[node.id]:null;
+  const NAVY="#1E3A5F";
+  const [aiState,setAiState]=useState<"idle"|"loading"|"done"|"error">("idle");
+  const [ai,setAi]=useState<AIClass|null>(null);
+  const [aiErr,setAiErr]=useState("");
+
+  const reclassify=async()=>{
+    const base=(import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
+    if(!base){ setAiState("error"); setAiErr("Backend not configured"); return; }
+    setAiState("loading"); setAiErr("");
+    try{
+      const r=await fetch(`${base}/classify`,{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({instrument:node.label,jurisdiction:details?.coverage,url:node.url})});
+      if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||`HTTP ${r.status}`); }
+      setAi(await r.json()); setAiState("done");
+    }catch(err){ setAiErr(err instanceof Error?err.message:String(err)); setAiState("error"); }
+  };
+
   if (!details) return null;
   const conf=details.confidence;
   const confC=conf>0.9?"#10B981":conf>0.75?"#F59E0B":"#EF4444";
@@ -1211,7 +1205,58 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
       </div>
 
       <div className="p-4 space-y-4 flex-1">
-        <p className="text-xs leading-relaxed" style={{color:"#475569"}}>{details.description}</p>
+        <p className="text-xs leading-relaxed whitespace-pre-line" style={{color:"#475569"}}>{details.description}</p>
+
+        {node.url&&(
+          <a href={node.url} target="_blank" rel="noreferrer"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all"
+            style={{background:h2r(node.glowColor,0.1),border:`1px solid ${h2r(node.glowColor,0.32)}`,color:node.glowColor,textDecoration:"none"}}
+            onMouseEnter={e=>(e.currentTarget.style.background=h2r(node.glowColor,0.18))}
+            onMouseLeave={e=>(e.currentTarget.style.background=h2r(node.glowColor,0.1))}>
+            <Link size={13}/>
+            <span className="truncate flex-1">{(()=>{try{return new URL(node.url).hostname;}catch{return "Open source";}})()}</span>
+            <span style={{opacity:0.7}}>↗</span>
+          </a>
+        )}
+
+        {node.type==="regulation"&&(
+          <div className="rounded-lg overflow-hidden" style={{border:"1px solid #E5E9F0"}}>
+            <button onClick={reclassify} disabled={aiState==="loading"}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold transition-colors"
+              style={{background:aiState==="loading"?"#F1F5F9":NAVY,color:aiState==="loading"?"#64748B":"#fff",cursor:aiState==="loading"?"default":"pointer"}}>
+              <Brain size={13}/>
+              {aiState==="loading"?"Classifying with Gemini…":aiState==="done"?"Re-classify with AI":"Classify with AI"}
+            </button>
+            {aiState==="error"&&(
+              <div className="px-3 py-2 text-xs" style={{color:"#B91C1C",background:"#FEF2F2"}}>{aiErr}</div>
+            )}
+            {aiState==="done"&&ai&&(
+              <div className="px-3 py-3 space-y-2.5" style={{background:"#F8FAFC"}}>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-widest mb-1" style={{color:"#94A3B8",fontFamily:"IBM Plex Sans, sans-serif"}}>Pillars</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ai.pillars.length?ai.pillars.map(p=>(
+                      <span key={p} className="text-xs px-2 py-0.5 rounded-full" style={{background:h2r(NAVY,0.08),color:NAVY,border:`1px solid ${h2r(NAVY,0.2)}`}}>{p}</span>
+                    )):<span className="text-xs" style={{color:"#94A3B8"}}>—</span>}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-widest mb-1" style={{color:"#94A3B8",fontFamily:"IBM Plex Sans, sans-serif"}}>Policy focus</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ai.policyFocus.length?ai.policyFocus.map(p=>(
+                      <span key={p} className="text-xs px-2 py-0.5 rounded-full" style={{background:"rgba(15,23,42,0.04)",color:"#475569",border:"1px solid #E5E9F0"}}>{p}</span>
+                    )):<span className="text-xs" style={{color:"#94A3B8"}}>—</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs" style={{color:"#64748B"}}>
+                  <span className="font-medium" style={{color:"#334155"}}>Coverage:</span> {ai.coverage}
+                </div>
+                {ai.rationale&&<p className="text-xs italic leading-relaxed" style={{color:"#64748B"}}>{ai.rationale}</p>}
+                <p className="text-xs" style={{color:"#CBD5E1"}}>via {ai.model}</p>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2">
           {[{l:"Category",v:details.category},{l:"Status",v:details.status,c:details.status==="Active"?"#10B981":details.status==="Proposed"?"#F59E0B":"#EF4444"},{l:"Enacted",v:details.enacted},{l:"Coverage",v:details.coverage}]
@@ -1225,7 +1270,7 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
 
         {!isC&&(
           <div className="flex gap-3">
-            {[{v:details.clauses,l:"Clauses",c:"#60A5FA",bg:"rgba(59,130,246,0.08)",br:"rgba(59,130,246,0.2)"},
+            {[{v:details.clauses,l:"Clauses",c:"#475569",bg:"rgba(30,58,95,0.08)",br:"rgba(30,58,95,0.2)"},
               {v:details.amendments,l:"Amendments",c:"#F59E0B",bg:"rgba(245,158,11,0.08)",br:"rgba(245,158,11,0.2)"}].map(s=>(
               <div key={s.l} className="flex-1 rounded-lg p-2.5 text-center" style={{background:s.bg,border:`1px solid ${s.br}`}}>
                 <div className="text-xl font-bold" style={{color:s.c,fontFamily:"JetBrains Mono, monospace"}}>{s.v}</div>
@@ -1238,8 +1283,8 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
         {isC&&ci&&(
           <>
             <div className="flex gap-3">
-              <div className="flex-1 rounded-lg p-2.5 text-center" style={{background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.2)"}}>
-                <div className="text-xl font-bold" style={{color:"#60A5FA",fontFamily:"JetBrains Mono, monospace"}}>{ci.regulations.length}</div>
+              <div className="flex-1 rounded-lg p-2.5 text-center" style={{background:"rgba(30,58,95,0.08)",border:"1px solid rgba(30,58,95,0.2)"}}>
+                <div className="text-xl font-bold" style={{color:"#475569",fontFamily:"JetBrains Mono, monospace"}}>{ci.regulations.length}</div>
                 <div className="text-xs mt-0.5" style={{color:"#64748B"}}>Regulations</div>
               </div>
               <div className="flex-1 rounded-lg p-2.5 text-center" style={{background:"rgba(16,185,129,0.08)",border:"1px solid rgba(16,185,129,0.2)"}}>
@@ -1274,11 +1319,11 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
         {!isC&&(
           <div className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>AI Reasoning Trace</p>
-            <div className="rounded-lg p-3 space-y-2.5" style={{background:"rgba(139,92,246,0.04)",border:"1px solid rgba(139,92,246,0.14)"}}>
+            <div className="rounded-lg p-3 space-y-2.5" style={{background:"rgba(30,58,95,0.04)",border:"1px solid rgba(30,58,95,0.14)"}}>
               {["Extracted from official government PDF portal","Semantic classification via RDTII taxonomy","Cross-referenced with regional precedent database","Compliance vector encoded to persistent memory","Citation graph updated — 3 new edges added"].map((s,i)=>(
                 <div key={i} className="flex items-start gap-2">
                   <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-                    style={{background:"rgba(139,92,246,0.15)",border:"1px solid rgba(139,92,246,0.3)"}}>
+                    style={{background:"rgba(30,58,95,0.15)",border:"1px solid rgba(30,58,95,0.3)"}}>
                     <span style={{color:"#7C3AED",fontSize:"8px",fontWeight:700}}>{i+1}</span>
                   </div>
                   <span className="text-xs leading-snug" style={{color:"#475569"}}>{s}</span>
@@ -1314,13 +1359,13 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
               if (!rel) return null;
               return (
                 <div key={k} className="flex items-center gap-2 px-2.5 py-2 rounded-lg"
-                  style={{background:"rgba(139,92,246,0.04)",border:"1px solid rgba(139,92,246,0.12)"}}>
+                  style={{background:"rgba(30,58,95,0.04)",border:"1px solid rgba(30,58,95,0.12)"}}>
                   <span className="text-base">{d.flag}</span>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs truncate" style={{color:"#374151"}}>{rel.label}</p>
                     <p className="text-xs" style={{color:"#64748B"}}>{d.name}</p>
                   </div>
-                  <Link size={10} style={{color:"#8B5CF6"}}/>
+                  <Link size={10} style={{color:"#334155"}}/>
                 </div>
               );
             })}
@@ -1460,9 +1505,9 @@ function DiffEngine() {
     <div className="max-w-6xl mx-auto px-6 py-8">
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-2">
-          <GitBranch size={18} style={{color:"#8B5CF6"}}/>
+          <GitBranch size={18} style={{color:"#334155"}}/>
           <h1 className="text-xl font-semibold" style={{color:"#0F172A",fontFamily:"Inter, sans-serif"}}>Country Comparison — Cross-Border Transfer</h1>
-          <span className="text-xs px-2 py-0.5 rounded" style={{background:"rgba(139,92,246,0.14)",color:"#8B5CF6",border:"1px solid rgba(139,92,246,0.3)"}}>ESCAP Analyst Mode</span>
+          <span className="text-xs px-2 py-0.5 rounded" style={{background:"rgba(30,58,95,0.14)",color:"#334155",border:"1px solid rgba(30,58,95,0.3)"}}>ESCAP Analyst Mode</span>
         </div>
         <p className="text-sm" style={{color:"#64748B"}}>
           Type one question, generate a comparison dashboard in seconds, and export a cited brief.
@@ -1478,7 +1523,7 @@ function DiffEngine() {
             style={{background:"#F8FAFC",border:"1px solid rgba(0,0,0,0.1)",color:"#0F172A"}}/>
           <button onClick={runQuery} disabled={running}
             className="px-4 py-3 rounded-lg text-sm font-medium transition-all"
-            style={{background:running?"rgba(59,130,246,0.15)":"rgba(59,130,246,0.9)",border:"1px solid rgba(59,130,246,0.5)",color:running?"#60A5FA":"#fff"}}>
+            style={{background:running?"rgba(30,58,95,0.15)":"rgba(30,58,95,0.9)",border:"1px solid rgba(30,58,95,0.5)",color:running?"#475569":"#fff"}}>
             {running?"Querying…":"Run"}
           </button>
           <button
@@ -1497,7 +1542,7 @@ function DiffEngine() {
             return (
               <button key={k} onClick={()=>toggle(k)}
                 className="text-xs px-3 py-1.5 rounded-full transition-colors"
-                style={{background:on?"rgba(59,130,246,0.1)":"rgba(0,0,0,0.04)",border:`1px solid ${on?"rgba(59,130,246,0.3)":"rgba(0,0,0,0.1)"}`,color:on?"#1D4ED8":"#374151"}}>
+                style={{background:on?"rgba(30,58,95,0.1)":"rgba(0,0,0,0.04)",border:`1px solid ${on?"rgba(30,58,95,0.3)":"rgba(0,0,0,0.1)"}`,color:on?"#1E3A5F":"#374151"}}>
                 {c.flag} {c.name}
               </button>
             );
@@ -1536,7 +1581,7 @@ function DiffEngine() {
                 <p className="text-sm font-medium" style={{color:"#0F172A"}}>ASEAN cross-border transfer comparison</p>
                 <p className="text-xs" style={{color:"#64748B",fontFamily:"JetBrains Mono, monospace"}}>{query}</p>
               </div>
-              <span className="text-xs px-2 py-1 rounded" style={{background:"rgba(59,130,246,0.1)",color:"#1D4ED8",border:"1px solid rgba(59,130,246,0.25)"}}>
+              <span className="text-xs px-2 py-1 rounded" style={{background:"rgba(30,58,95,0.1)",color:"#1E3A5F",border:"1px solid rgba(30,58,95,0.25)"}}>
                 {rows.length} selected
               </span>
             </div>
@@ -1573,7 +1618,7 @@ function DiffEngine() {
                         <p className="text-xs font-semibold uppercase tracking-widest" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>Citations</p>
                         <div className="mt-2 space-y-1.5">
                           {r.citations.map((c,i)=>(
-                            <div key={i} className="text-xs px-2.5 py-2 rounded-lg" style={{background:"rgba(139,92,246,0.06)",border:"1px solid rgba(139,92,246,0.15)",color:"#6D28D9"}}>
+                            <div key={i} className="text-xs px-2.5 py-2 rounded-lg" style={{background:"rgba(30,58,95,0.06)",border:"1px solid rgba(30,58,95,0.15)",color:"#6D28D9"}}>
                               <span style={{fontFamily:"JetBrains Mono, monospace"}}>{c.instrument}</span>
                               <span style={{color:"#64748B"}}> — {c.section}</span>
                               {c.note&&<span style={{color:"#94A3B8"}}> · {c.note}</span>}
@@ -1588,10 +1633,10 @@ function DiffEngine() {
             </div>
           </div>
 
-          <div className="rounded-xl p-4 mt-5" style={{background:"rgba(139,92,246,0.04)",border:"1px solid rgba(139,92,246,0.15)"}}>
+          <div className="rounded-xl p-4 mt-5" style={{background:"rgba(30,58,95,0.04)",border:"1px solid rgba(30,58,95,0.15)"}}>
             <div className="flex items-center gap-2 mb-3">
-              <Brain size={14} style={{color:"#8B5CF6"}}/>
-              <span className="text-xs font-semibold uppercase tracking-widest" style={{color:"#8B5CF6",fontFamily:"IBM Plex Sans, sans-serif"}}>Automated analyst brief</span>
+              <Brain size={14} style={{color:"#334155"}}/>
+              <span className="text-xs font-semibold uppercase tracking-widest" style={{color:"#334155",fontFamily:"IBM Plex Sans, sans-serif"}}>Automated analyst brief</span>
             </div>
             <p className="text-sm leading-relaxed" style={{color:"#475569"}}>
               This dashboard compresses what used to take weeks of manual legal review: collecting cross-border transfer clauses, normalizing them into comparable conditions, and producing a citation-ready brief for policy work.
@@ -1604,18 +1649,220 @@ function DiffEngine() {
 }
 
 // ==================== SIMULATION SANDBOX ====================
+type SimOptions = { jurisdictions:string[]; dataCategories:string[]; storageRegions:string[]; controls:string[] };
+type SimVerdict = "permitted"|"conditional"|"restricted";
+type SimJur = { jurisdiction:string; flag:string; verdict:SimVerdict; score:number; friction:string; obligations:string[]; risks:string[]; instruments:Array<{instrument:string;url:string;pillar?:string}> };
+type SimResult = { overall:{verdict:SimVerdict;score:number;summary:string}; jurisdictions:SimJur[]; narrative?:string };
+
+const VERDICT_STYLE: Record<SimVerdict,{label:string;color:string;bg:string}> = {
+  permitted:   { label:"Permitted",   color:"#047857", bg:"rgba(4,120,87,0.1)" },
+  conditional: { label:"Conditional", color:"#B45309", bg:"rgba(180,83,9,0.1)" },
+  restricted:  { label:"Restricted",  color:"#B91C1C", bg:"rgba(185,28,28,0.1)" },
+};
+const NAVY="#1E3A5F";
+
 function SimulationSandbox() {
+  const base=(import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
+  const [opt,setOpt]=useState<SimOptions|null>(null);
+  const [businessType,setBusinessType]=useState("Health-tech SaaS");
+  const [cats,setCats]=useState<Set<string>>(new Set(["Personal","Health / Sensitive"]));
+  const [region,setRegion]=useState("AWS Singapore");
+  const [targets,setTargets]=useState<Set<string>>(new Set(["Philippines","Singapore","Malaysia"]));
+  const [crossBorder,setCrossBorder]=useState(true);
+  const [controls,setControls]=useState<Record<string,boolean>>({consent:true,dpa:false,encryption:true,localCopy:false});
+  const [result,setResult]=useState<SimResult|null>(null);
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState("");
+
+  useEffect(()=>{ if(!base) return; fetch(`${base}/simulate/options`).then(r=>r.json()).then(setOpt).catch(()=>{}); },[base]);
+
+  const toggleSet=(s:Set<string>,v:string,set:(x:Set<string>)=>void)=>{ const n=new Set(s); n.has(v)?n.delete(v):n.add(v); set(n); };
+
+  const run=async()=>{
+    if(!base){ setErr("Backend not configured (VITE_AILA_API_BASE_URL)."); return; }
+    if(targets.size===0){ setErr("Pick at least one jurisdiction."); return; }
+    setLoading(true); setErr("");
+    try{
+      const r=await fetch(`${base}/simulate`,{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({businessType,dataCategories:[...cats],storageRegion:region,targetJurisdictions:[...targets],crossBorderTransfer:crossBorder,controls,explain:true})});
+      if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||`HTTP ${r.status}`); }
+      setResult(await r.json());
+    }catch(e){ setErr(e instanceof Error?e.message:String(e)); }
+    finally{ setLoading(false); }
+  };
+
+  const chip=(active:boolean)=>({fontSize:"12px",padding:"6px 12px",borderRadius:"20px",cursor:"pointer",userSelect:"none" as const,
+    border:`1px solid ${active?NAVY:"#E5E9F0"}`,background:active?h2r(NAVY,0.08):"#fff",color:active?NAVY:"#64748B",fontWeight:active?600:500});
+
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
-      <div className="mb-6 flex items-center gap-3">
-        <FlaskConical size={18} style={{color:"#1D4ED8"}}/>
-        <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Compliance Simulation Sandbox</h1>
+      <div className="mb-1 flex items-center gap-3">
+        <FlaskConical size={18} style={{color:NAVY}}/>
+        <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Compliance Digital Twin</h1>
       </div>
-      <div className="rounded-xl p-4" style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.08)"}}>
-        <p className="text-sm" style={{color:"#64748B"}}>
-          Simulation view placeholder.
-        </p>
+      <p className="text-sm mb-6" style={{color:"#64748B"}}>Model a data-handling scenario and run what-ifs across ASEAN jurisdictions.</p>
+
+      <div className="grid gap-6" style={{gridTemplateColumns:"340px 1fr"}}>
+        {/* ===== scenario form ===== */}
+        <div className="rounded-xl p-5 self-start" style={{background:"#fff",border:"1px solid #E5E9F0"}}>
+          <Field label="Business type">
+            <input value={businessType} onChange={e=>setBusinessType(e.target.value)}
+              className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{border:"1px solid #E5E9F0",color:"#0F172A"}}/>
+          </Field>
+
+          <Field label="Data categories">
+            <div className="flex flex-wrap gap-1.5">
+              {(opt?.dataCategories??["Personal","Health / Sensitive","Financial","Biometric"]).map(c=>(
+                <span key={c} style={chip(cats.has(c))} onClick={()=>toggleSet(cats,c,setCats)}>{c}</span>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Storage region">
+            <select value={region} onChange={e=>setRegion(e.target.value)}
+              className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{border:"1px solid #E5E9F0",color:"#0F172A",background:"#fff"}}>
+              {(opt?.storageRegions??["In-country","AWS Singapore"]).map(r=> <option key={r} value={r}>{r}</option>)}
+            </select>
+          </Field>
+
+          <Field label="Target jurisdictions">
+            <div className="flex flex-wrap gap-1.5">
+              {(opt?.jurisdictions??["Philippines","Singapore","Malaysia"]).map(j=>(
+                <span key={j} style={chip(targets.has(j))} onClick={()=>toggleSet(targets,j,setTargets)}>{j}</span>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Controls in place">
+            <div className="flex flex-col gap-2">
+              {[["crossBorder","Cross-border transfer"],["consent","User consent obtained"],["dpa","Data Processing Agreement"],["encryption","Encryption at rest & transit"],["localCopy","In-country data copy"]].map(([k,lbl])=>{
+                const on = k==="crossBorder"?crossBorder:controls[k];
+                const set = ()=> k==="crossBorder"?setCrossBorder(!crossBorder):setControls(c=>({...c,[k]:!c[k]}));
+                return (
+                  <button key={k} onClick={set} className="flex items-center justify-between text-sm" style={{color:"#334155"}}>
+                    <span>{lbl}</span>
+                    <span className="relative inline-block" style={{width:"34px",height:"18px",borderRadius:"20px",background:on?NAVY:"#E2E8F0",transition:"background .15s"}}>
+                      <span className="absolute rounded-full" style={{top:"2px",width:"14px",height:"14px",background:"#fff",left:on?"18px":"2px",transition:"left .15s"}}/>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+
+          <button onClick={run} disabled={loading}
+            className="w-full flex items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold mt-2"
+            style={{background:loading?"#94A3B8":NAVY,color:"#fff",border:"none",cursor:loading?"default":"pointer"}}>
+            <FlaskConical size={15}/>{loading?"Running simulation…":"Run Simulation"}
+          </button>
+          {err&&<p className="text-xs mt-2" style={{color:"#B91C1C"}}>{err}</p>}
+        </div>
+
+        {/* ===== results ===== */}
+        <div>
+          {loading&&(
+            <div className="rounded-xl p-8 flex flex-col items-center justify-center" style={{background:"#fff",border:"1px solid #E5E9F0",minHeight:"260px"}}>
+              <CrawlerGraphLoader/>
+            </div>
+          )}
+
+          {!result&&!loading&&(
+            <div className="rounded-xl p-10 text-center" style={{background:"#fff",border:"1px dashed #E5E9F0"}}>
+              <FlaskConical size={26} style={{color:"#CBD5E1",margin:"0 auto 10px"}}/>
+              <p className="text-sm" style={{color:"#94A3B8"}}>Configure a scenario and run the simulation to see the compliance verdict per jurisdiction.</p>
+            </div>
+          )}
+
+          {result&&!loading&&(
+            <div className="space-y-4">
+              {/* overall */}
+              <div className="rounded-xl p-5" style={{background:"#fff",border:"1px solid #E5E9F0"}}>
+                <div className="flex items-center gap-3 mb-2">
+                  <span className="text-xs font-bold uppercase tracking-widest px-2.5 py-1 rounded-full"
+                    style={{color:VERDICT_STYLE[result.overall.verdict].color,background:VERDICT_STYLE[result.overall.verdict].bg}}>
+                    {VERDICT_STYLE[result.overall.verdict].label}
+                  </span>
+                  <span className="text-sm" style={{color:"#64748B"}}>Overall readiness</span>
+                  <div className="ml-auto text-2xl font-bold" style={{color:NAVY,fontFamily:"JetBrains Mono, monospace"}}>{result.overall.score}</div>
+                </div>
+                <p className="text-sm leading-relaxed" style={{color:"#334155"}}>{result.overall.summary}</p>
+                {result.narrative&&(
+                  <div className="mt-3 pt-3 flex gap-2.5" style={{borderTop:"1px solid #F1F5F9"}}>
+                    <Brain size={15} style={{color:NAVY,flexShrink:0,marginTop:"2px"}}/>
+                    <p className="text-sm leading-relaxed italic" style={{color:"#475569"}}>{result.narrative}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* per jurisdiction */}
+              {result.jurisdictions.map(j=>(
+                <div key={j.jurisdiction} className="rounded-xl p-5" style={{background:"#fff",border:"1px solid #E5E9F0"}}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="text-2xl">{j.flag}</span>
+                    <h3 className="font-semibold" style={{color:"#0F172A"}}>{j.jurisdiction}</h3>
+                    <span className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                      style={{color:VERDICT_STYLE[j.verdict].color,background:VERDICT_STYLE[j.verdict].bg}}>{VERDICT_STYLE[j.verdict].label}</span>
+                    <div className="ml-auto text-right">
+                      <div className="text-lg font-bold" style={{color:NAVY,fontFamily:"JetBrains Mono, monospace"}}>{j.score}</div>
+                      <div className="text-xs" style={{color:"#94A3B8"}}>{j.friction} friction</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-widest mb-1.5" style={{color:"#94A3B8"}}>Obligations</p>
+                      {j.obligations.length?(
+                        <ul className="space-y-1.5">{j.obligations.map((o,i)=>{
+                          const critical=/residency|in-country|domestically|prohibited|infrastructure|approved mechanism|local copy/i.test(o);
+                          return critical?(
+                            <li key={i} className="text-xs leading-relaxed flex items-start gap-1.5 px-2 py-1 rounded"
+                              style={{color:"#92400E",background:"rgba(245,158,11,0.12)",border:"1px solid rgba(245,158,11,0.25)"}}>
+                              <span style={{fontSize:"9px",fontWeight:700,letterSpacing:"0.05em",background:"#B45309",color:"#fff",padding:"1px 5px",borderRadius:"4px",marginTop:"1px",flexShrink:0}}>KEY</span>
+                              <span>{o}</span>
+                            </li>
+                          ):(
+                            <li key={i} className="text-xs leading-relaxed" style={{color:"#334155"}}>• {o}</li>
+                          );
+                        })}</ul>
+                      ):<p className="text-xs" style={{color:"#94A3B8"}}>Standard safeguards only</p>}
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-widest mb-1.5" style={{color:"#94A3B8"}}>Risks to address</p>
+                      {j.risks.length?(
+                        <div className="rounded-lg p-2.5" style={{background:"rgba(185,28,28,0.05)",border:"1px solid rgba(185,28,28,0.18)"}}>
+                          <ul className="space-y-1.5">{j.risks.map((o,i)=>(
+                            <li key={i} className="text-xs leading-relaxed flex items-start gap-1.5" style={{color:"#B91C1C"}}>
+                              <span style={{marginTop:"1px",flexShrink:0}}>⚠</span><span>{o}</span>
+                            </li>
+                          ))}</ul>
+                        </div>
+                      ):<p className="text-xs" style={{color:"#94A3B8"}}>None flagged</p>}
+                    </div>
+                  </div>
+                  {j.instruments.length>0&&(
+                    <div className="mt-3 pt-3 flex flex-wrap gap-1.5" style={{borderTop:"1px solid #F1F5F9"}}>
+                      {j.instruments.map((ins,i)=>(
+                        <a key={i} href={ins.url} target="_blank" rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md" style={{background:"rgba(15,23,42,0.04)",color:"#475569",textDecoration:"none"}}>
+                          <Link size={10}/>{ins.instrument.length>34?ins.instrument.slice(0,33)+"…":ins.instrument}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function Field({label,children}:{label:string;children:React.ReactNode}) {
+  return (
+    <div className="mb-4">
+      <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>{label}</p>
+      {children}
     </div>
   );
 }
@@ -1676,7 +1923,7 @@ const SME_RICH_RESPONSE: RichResponse = {
 const RELATED_ARTICLES = [
   { source:"NPC Bulletin", cat:"Regulation", catColor:"#DC2626", date:"28 Mar 2024", title:"Cross-Border Data Transfers Under the Philippine Data Privacy Act", read:"6 min", grad:["#FEE2E2","#FECACA"] },
   { source:"ASEAN Privacy Review", cat:"Best Practice", catColor:"#EA580C", date:"14 Jan 2024", title:"Cloud Storage Compliance for Health-Tech Startups in Southeast Asia", read:"9 min", grad:["#FFEDD5","#FED7AA"] },
-  { source:"Cloud Legal Journal", cat:"Advisory", catColor:"#2563EB", date:"30 Nov 2023", title:"AWS Singapore Region: Data Residency & Adequacy Considerations", read:"5 min", grad:["#DBEAFE","#BFDBFE"] },
+  { source:"Cloud Legal Journal", cat:"Advisory", catColor:"#1E3A5F", date:"30 Nov 2023", title:"AWS Singapore Region: Data Residency & Adequacy Considerations", read:"5 min", grad:["#DBEAFE","#BFDBFE"] },
 ];
 
 const PDF_SNIPPET = {
@@ -1749,7 +1996,10 @@ const CITED_PROVISIONS = [
   { src:"NPC Circular 16-03", flag:"🇵🇭", date:"2016", note:"A personal data breach involving sensitive personal information that may give rise to a real risk of serious harm must be notified to the Commission and affected data subjects within 72 hours of knowledge." },
 ];
 
-function AnswerPage({ query, onBack }: { query: string; onBack: () => void }) {
+type RagCitation = { n:number; instrument:string; jurisdiction:string; url:string; score:number; snippet:string };
+type RagResult = { question:string; answer:string; confidence:number; grounded:boolean; citations:RagCitation[]; retrieved:number };
+
+function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBack: () => void; onSimulate: () => void; result?: RagResult|null }) {
   const r = SME_RICH_RESPONSE;
   const serif = "Georgia, 'Times New Roman', serif";
   const frictionColor:Record<string,string>={Low:"#10B981",Medium:"#F59E0B",High:"#EF4444"};
@@ -1760,43 +2010,40 @@ function AnswerPage({ query, onBack }: { query: string; onBack: () => void }) {
 
   return (
     <div style={{position:"absolute",inset:0,background:"#FFFFFF",overflowY:"auto",zIndex:50,fontFamily:"Inter, sans-serif"}}>
-      {/* ===== DARK MASTHEAD ===== */}
-      <div style={{background:"#1A1A1A",color:"#fff"}}>
-        <div style={{maxWidth:"1080px",margin:"0 auto",padding:"16px 28px",display:"flex",alignItems:"center",gap:"16px"}}>
-          <div style={{display:"flex",gap:"8px"}}>
-            {["f","t","in"].map(s=>(
-              <span key={s} style={{width:"24px",height:"24px",borderRadius:"50%",border:"1px solid rgba(255,255,255,0.25)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"10px",color:"rgba(255,255,255,0.7)"}}>{s}</span>
-            ))}
-          </div>
-          <div style={{flex:1,textAlign:"center"}}>
-            <span style={{fontFamily:serif,fontSize:"22px",fontWeight:700,letterSpacing:"0.01em"}}>AILA <span style={{fontWeight:400}}>Legal</span></span>
-          </div>
-          <button onClick={onBack} style={{fontSize:"11px",fontWeight:600,letterSpacing:"0.12em",color:"rgba(255,255,255,0.85)",background:"none",border:"1px solid rgba(255,255,255,0.3)",borderRadius:"4px",padding:"7px 16px",cursor:"pointer"}}>SIGN IN</button>
-        </div>
-        <div style={{borderTop:"1px solid rgba(255,255,255,0.1)"}}>
-          <div style={{maxWidth:"1080px",margin:"0 auto",padding:"12px 28px",display:"flex",alignItems:"center",gap:"16px"}}>
-            <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.85)",display:"flex",alignItems:"center"}}><Menu size={18}/></button>
-            <div style={{flex:1,display:"flex",justifyContent:"center",gap:"30px"}}>
-              {["PRIVACY","FINTECH","AI","CROSS-BORDER","ADVISORIES"].map(t=>(
-                <span key={t} style={{fontSize:"11px",fontWeight:600,letterSpacing:"0.1em",color:"rgba(255,255,255,0.7)",cursor:"default"}}>{t}</span>
-              ))}
-            </div>
-            <Search size={16} style={{color:"rgba(255,255,255,0.7)"}}/>
-          </div>
+      {/* ===== CLEAN HEADER ===== */}
+      <div style={{position:"sticky",top:0,zIndex:20,background:"rgba(255,255,255,0.9)",backdropFilter:"blur(12px)",borderBottom:"1px solid #E5E9F0"}}>
+        <div style={{maxWidth:"1080px",margin:"0 auto",padding:"14px 28px",display:"flex",alignItems:"center",gap:"16px"}}>
+          <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:"7px",fontSize:"13px",fontWeight:500,color:"#475569",background:"none",border:"none",cursor:"pointer"}}>
+            <ChevronLeft size={16}/> Back to Assistant
+          </button>
+          <div style={{flex:1}}/>
+          <img src={ailaLogo} alt="AILA" style={{height:"20px",width:"auto",objectFit:"contain"}}/>
         </div>
       </div>
 
       {/* ===== HERO ===== */}
-      <div style={{position:"relative",minHeight:"360px",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",background:"linear-gradient(135deg,#1E3A5F 0%,#2D6A8F 50%,#3B8EA5 100%)"}}>
+      <div style={{position:"relative",minHeight:"360px",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",background:"linear-gradient(135deg,#0F1E33 0%,#1E3A5F 55%,#334155 100%)"}}>
         <div style={{position:"absolute",inset:0,background:"linear-gradient(180deg,rgba(15,23,42,0.35),rgba(15,23,42,0.62))"}}/>
         <div style={{position:"relative",textAlign:"center",padding:"56px 28px",maxWidth:"760px"}}>
-          <span style={{display:"inline-block",fontSize:"10px",fontWeight:700,letterSpacing:"0.18em",color:"#fff",border:"1px solid rgba(255,255,255,0.5)",borderRadius:"3px",padding:"5px 12px",marginBottom:"22px"}}>DATA PRIVACY</span>
+          <span style={{display:"inline-block",fontSize:"10px",fontWeight:700,letterSpacing:"0.18em",color:"#fff",border:"1px solid rgba(255,255,255,0.5)",borderRadius:"3px",padding:"5px 12px",marginBottom:"22px"}}>
+            {result ? (result.grounded ? "GROUNDED ANSWER" : "LOW-CONFIDENCE ANSWER") : "DATA PRIVACY"}
+          </span>
           <h1 style={{fontFamily:serif,fontSize:"42px",lineHeight:1.18,fontWeight:700,color:"#fff",margin:"0 0 22px",letterSpacing:"-0.01em"}}>{query}</h1>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"22px",color:"rgba(255,255,255,0.85)",fontSize:"12px"}}>
-            <span>{A.date}</span>
-            <span style={{display:"inline-flex",alignItems:"center",gap:"6px"}}><Eye size={13}/> {A.views}</span>
-            <span style={{display:"inline-flex",alignItems:"center",gap:"6px"}}><MessageCircle size={13}/> {CITED_PROVISIONS.length}</span>
-            <span style={{display:"inline-flex",alignItems:"center",gap:"6px",border:"1px solid rgba(255,255,255,0.35)",borderRadius:"20px",padding:"4px 12px"}}><Share2 size={12}/> Share</span>
+            {result ? (
+              <>
+                <span>{Math.round(result.confidence*100)}% confidence</span>
+                <span style={{display:"inline-flex",alignItems:"center",gap:"6px"}}><MessageCircle size={13}/> {result.citations.length} citations</span>
+                <span style={{display:"inline-flex",alignItems:"center",gap:"6px"}}>{result.retrieved} excerpts retrieved</span>
+              </>
+            ) : (
+              <>
+                <span>{A.date}</span>
+                <span style={{display:"inline-flex",alignItems:"center",gap:"6px"}}><Eye size={13}/> {A.views}</span>
+                <span style={{display:"inline-flex",alignItems:"center",gap:"6px"}}><MessageCircle size={13}/> {CITED_PROVISIONS.length}</span>
+                <span style={{display:"inline-flex",alignItems:"center",gap:"6px",border:"1px solid rgba(255,255,255,0.35)",borderRadius:"20px",padding:"4px 12px"}}><Share2 size={12}/> Share</span>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -1806,30 +2053,63 @@ function AnswerPage({ query, onBack }: { query: string; onBack: () => void }) {
         <div style={{display:"grid",gridTemplateColumns:"190px 1fr",gap:"44px",alignItems:"start"}}>
           {/* author card */}
           <aside style={{position:"sticky",top:"28px",textAlign:"center",borderRight:"1px solid rgba(15,23,42,0.08)",paddingRight:"24px"}}>
-            <div style={{width:"72px",height:"72px",borderRadius:"50%",margin:"0 auto 14px",background:"linear-gradient(135deg,#1D4ED8,#3B82F6)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:"22px",fontFamily:serif}}>{A.author.initials}</div>
+            <div style={{width:"72px",height:"72px",borderRadius:"50%",margin:"0 auto 14px",background:"linear-gradient(135deg,#1E3A5F,#1E3A5F)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:"22px",fontFamily:serif}}>{A.author.initials}</div>
             <p style={{fontSize:"11px",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"#0F172A",margin:"0 0 3px"}}>{A.author.name}</p>
             <p style={{fontSize:"11px",color:"#94A3B8",margin:"0 0 14px"}}>{A.author.role}</p>
             <div style={{display:"flex",justifyContent:"center",gap:"8px",marginBottom:"16px"}}>
               {["f","t","in"].map(s=>(<span key={s} style={{width:"24px",height:"24px",borderRadius:"50%",border:"1px solid rgba(15,23,42,0.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"10px",color:"#64748B"}}>{s}</span>))}
             </div>
-            <span style={{display:"inline-block",fontSize:"10px",fontWeight:700,letterSpacing:"0.12em",color:"#1D4ED8",borderBottom:"1px solid rgba(29,78,216,0.3)",paddingBottom:"3px",marginBottom:"18px",cursor:"default"}}>ALL SOURCES</span>
-            <div style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",color:r.verdict.color,background:r.verdict.bg,padding:"6px 8px",borderRadius:"6px",lineHeight:1.4}}>{r.verdict.label}</div>
+            <span style={{display:"inline-block",fontSize:"10px",fontWeight:700,letterSpacing:"0.12em",color:"#1E3A5F",borderBottom:"1px solid rgba(29,78,216,0.3)",paddingBottom:"3px",marginBottom:"18px",cursor:"default"}}>ALL SOURCES</span>
+            <div style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",color:r.verdict.color,background:r.verdict.bg,padding:"6px 8px",borderRadius:"6px",lineHeight:1.4}}>
+              {result ? `${Math.round(result.confidence*100)}% confidence` : r.verdict.label}
+            </div>
           </aside>
 
           {/* prose */}
           <div>
-            <p style={{fontSize:"18px",lineHeight:1.7,color:"#1E293B",margin:"0 0 34px",fontFamily:serif}}>{A.lead}</p>
-            {A.body.map((s,i)=>(
-              <div key={i} style={{marginBottom:"30px"}}>
-                <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#0F172A",margin:"0 0 12px"}}>{s.heading}</h2>
-                {s.paras.map((p,j)=>(<p key={j} style={{fontSize:"15px",lineHeight:1.78,color:"#334155",margin:"0 0 14px"}}>{p}</p>))}
-              </div>
-            ))}
+            {result ? (
+              <>
+                <p style={{fontSize:"18px",lineHeight:1.75,color:"#1E293B",margin:"0 0 28px",fontFamily:serif}}>{result.answer}</p>
+                {!result.grounded&&(
+                  <div style={{fontSize:"13px",color:"#92400E",background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.25)",borderRadius:"8px",padding:"10px 14px",marginBottom:"28px"}}>
+                    ⚠ Limited evidence in the corpus for this question — treat the answer as indicative and verify against the cited sources.
+                  </div>
+                )}
+                <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#0F172A",margin:"0 0 14px"}}>Evidence &amp; Citations</h2>
+                <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+                  {result.citations.map(c=>(
+                    <div key={c.n} style={{border:"1px solid #E5E9F0",borderRadius:"10px",padding:"14px 16px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}}>
+                        <span style={{fontSize:"11px",fontWeight:700,color:"#fff",background:"#1E3A5F",borderRadius:"5px",padding:"1px 7px",fontFamily:"JetBrains Mono, monospace"}}>[{c.n}]</span>
+                        <span style={{fontSize:"13px",fontWeight:600,color:"#0F172A"}}>{c.instrument}</span>
+                        <span style={{fontSize:"11px",color:"#94A3B8"}}>{c.jurisdiction}</span>
+                        <span style={{marginLeft:"auto",fontSize:"10px",color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>match {Math.round(c.score*100)}%</span>
+                      </div>
+                      <p style={{fontSize:"12.5px",lineHeight:1.6,color:"#475569",margin:"0 0 8px"}}>{c.snippet}</p>
+                      <a href={c.url} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:"5px",fontSize:"11px",fontWeight:600,color:"#1E3A5F",textDecoration:"none"}}>
+                        <Link size={11}/>{(()=>{try{return new URL(c.url).hostname;}catch{return "source";}})()} ↗
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <p style={{fontSize:"18px",lineHeight:1.7,color:"#1E293B",margin:"0 0 34px",fontFamily:serif}}>{A.lead}</p>
+                {A.body.map((s,i)=>(
+                  <div key={i} style={{marginBottom:"30px"}}>
+                    <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#0F172A",margin:"0 0 12px"}}>{s.heading}</h2>
+                    {s.paras.map((p,j)=>(<p key={j} style={{fontSize:"15px",lineHeight:1.78,color:"#334155",margin:"0 0 14px"}}>{p}</p>))}
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </div>
       </div>
 
-      {/* ===== EXHIBIT: uploaded PDF + pull quote ===== */}
+      {/* ===== EXHIBIT: uploaded PDF + pull quote (static demo only) ===== */}
+      {!result&&<>
       <div style={{maxWidth:"940px",margin:"24px auto 0",padding:"0 28px"}}>
         <div style={{position:"relative"}}>
           {/* document exhibit */}
@@ -1868,7 +2148,7 @@ function AnswerPage({ query, onBack }: { query: string; onBack: () => void }) {
               <Scale size={30} style={{color:"rgba(15,23,42,0.25)"}}/>
             </div>
             <p style={{fontSize:"11px",color:"#64748B",lineHeight:1.55,margin:"0 0 12px"}}>{A.history.sideCaption}</p>
-            <span style={{display:"inline-flex",alignItems:"center",gap:"5px",fontSize:"10px",fontWeight:700,letterSpacing:"0.08em",color:"#1D4ED8",cursor:"default"}}><ChevronRight size={11}/> {A.history.sideLabel}</span>
+            <span style={{display:"inline-flex",alignItems:"center",gap:"5px",fontSize:"10px",fontWeight:700,letterSpacing:"0.08em",color:"#1E3A5F",cursor:"default"}}><ChevronRight size={11}/> {A.history.sideLabel}</span>
           </aside>
           {/* text */}
           <div>
@@ -1876,7 +2156,7 @@ function AnswerPage({ query, onBack }: { query: string; onBack: () => void }) {
             {A.history.paras.map((p,i)=>(<p key={i} style={{fontSize:"15px",lineHeight:1.78,color:"#334155",margin:"0 0 14px"}}>{p}</p>))}
             <h2 style={{fontFamily:serif,fontSize:"27px",fontWeight:700,color:"#0F172A",lineHeight:1.3,margin:"28px 0 16px",paddingBottom:"16px",borderBottom:"1px solid rgba(15,23,42,0.1)"}}>{A.history.heading}</h2>
             {/* callout */}
-            <blockquote style={{margin:"24px 0",padding:"6px 0 6px 22px",borderLeft:"3px solid #1D4ED8"}}>
+            <blockquote style={{margin:"24px 0",padding:"6px 0 6px 22px",borderLeft:"3px solid #1E3A5F"}}>
               <p style={{fontFamily:serif,fontStyle:"italic",fontSize:"19px",lineHeight:1.55,color:"#0F172A",margin:0}}>{A.callout}</p>
             </blockquote>
           </div>
@@ -1898,17 +2178,18 @@ function AnswerPage({ query, onBack }: { query: string; onBack: () => void }) {
           </div>
         </div>
       </div>
+      </>}
 
       {/* ===== REGIONAL COMPARISON ===== */}
       <div style={{maxWidth:"940px",margin:"56px auto 0",padding:"0 28px"}}>
         <div style={{maxWidth:"706px",marginLeft:"auto"}}>
           <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#0F172A",margin:"0 0 6px"}}>How the Region Compares</h2>
           <p style={{fontSize:"14px",color:"#64748B",margin:"0 0 18px"}}>Cross-border transfer of sensitive data across ASEAN jurisdictions.</p>
-          <div style={{border:"1.5px solid rgba(29,78,216,0.3)",borderRadius:"12px",padding:"15px 17px",marginBottom:"12px",background:"rgba(59,130,246,0.04)"}}>
+          <div style={{border:"1.5px solid rgba(29,78,216,0.3)",borderRadius:"12px",padding:"15px 17px",marginBottom:"12px",background:"rgba(30,58,95,0.04)"}}>
             <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"7px"}}>
               <span style={{fontSize:"19px"}}>🇵🇭</span>
               <span style={{fontSize:"14px",fontWeight:700,color:"#0F172A"}}>{ph.name}</span>
-              <span style={{fontSize:"10px",fontWeight:700,color:"#1D4ED8",background:"rgba(29,78,216,0.1)",padding:"2px 8px",borderRadius:"20px",letterSpacing:"0.05em"}}>YOUR JURISDICTION</span>
+              <span style={{fontSize:"10px",fontWeight:700,color:"#1E3A5F",background:"rgba(29,78,216,0.1)",padding:"2px 8px",borderRadius:"20px",letterSpacing:"0.05em"}}>YOUR JURISDICTION</span>
               <div style={{flex:1}}/>
               <span style={{fontSize:"11px",fontWeight:700,color:frictionColor[ph.friction]}}>{ph.friction} friction</span>
             </div>
@@ -1949,7 +2230,7 @@ function AnswerPage({ query, onBack }: { query: string; onBack: () => void }) {
         <div style={{maxWidth:"820px",margin:"0 auto",padding:"44px 28px 52px"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"10px",marginBottom:"32px"}}>
             <h2 style={{fontFamily:serif,fontSize:"22px",fontWeight:700,color:"#0F172A",margin:0}}>Cited Provisions</h2>
-            <span style={{fontSize:"12px",fontWeight:700,color:"#fff",background:"#1D4ED8",borderRadius:"50%",width:"22px",height:"22px",display:"flex",alignItems:"center",justifyContent:"center"}}>{CITED_PROVISIONS.length}</span>
+            <span style={{fontSize:"12px",fontWeight:700,color:"#fff",background:"#1E3A5F",borderRadius:"50%",width:"22px",height:"22px",display:"flex",alignItems:"center",justifyContent:"center"}}>{CITED_PROVISIONS.length}</span>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:"20px"}}>
             {CITED_PROVISIONS.map((c,i)=>(
@@ -1961,7 +2242,7 @@ function AnswerPage({ query, onBack }: { query: string; onBack: () => void }) {
                     <span style={{fontSize:"11px",color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{c.date}</span>
                   </div>
                   <p style={{fontSize:"14px",lineHeight:1.65,color:"#475569",margin:"0 0 6px",fontFamily:serif}}>{c.note}</p>
-                  <span style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"#1D4ED8",cursor:"default"}}>View Source</span>
+                  <span style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"#1E3A5F",cursor:"default"}}>View Source</span>
                 </div>
               </div>
             ))}
@@ -1991,47 +2272,153 @@ function AnswerPage({ query, onBack }: { query: string; onBack: () => void }) {
       </div>
 
       {/* ===== FOOTER ===== */}
-      <div style={{background:"#111827",color:"rgba(255,255,255,0.7)"}}>
-        <div style={{maxWidth:"1080px",margin:"0 auto",padding:"28px",display:"flex",alignItems:"center",gap:"24px",borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
-          <span style={{fontFamily:serif,fontSize:"18px",fontWeight:700,color:"#fff"}}>AILA Legal</span>
-          <div style={{flex:1,display:"flex",gap:"24px"}}>
-            {["PRIVACY","FINTECH","AI","CROSS-BORDER","ADVISORIES"].map(t=>(<span key={t} style={{fontSize:"11px",fontWeight:600,letterSpacing:"0.08em"}}>{t}</span>))}
+      <div style={{borderTop:"1px solid #E5E9F0",marginTop:"32px"}}>
+        <div style={{maxWidth:"706px",margin:"0 auto",padding:"32px 28px 56px",textAlign:"center"}}>
+          <div style={{display:"flex",gap:"12px",justifyContent:"center",flexWrap:"wrap"}}>
+            <button onClick={onSimulate} style={{display:"inline-flex",alignItems:"center",gap:"8px",fontSize:"13px",fontWeight:600,color:"#fff",background:"#1E3A5F",border:"none",borderRadius:"10px",padding:"11px 22px",cursor:"pointer"}}>
+              <FlaskConical size={15}/> Run a Simulation
+            </button>
+            <button onClick={onBack} style={{display:"inline-flex",alignItems:"center",gap:"8px",fontSize:"13px",fontWeight:600,color:"#1E3A5F",background:"#fff",border:"1px solid #1E3A5F",borderRadius:"10px",padding:"11px 22px",cursor:"pointer"}}>
+              <MessageSquare size={15}/> Ask another question
+            </button>
           </div>
-          <div style={{display:"flex",gap:"8px"}}>
-            {["f","t","in"].map(s=>(<span key={s} style={{width:"24px",height:"24px",borderRadius:"50%",border:"1px solid rgba(255,255,255,0.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"10px"}}>{s}</span>))}
-          </div>
-        </div>
-        <div style={{maxWidth:"1080px",margin:"0 auto",padding:"28px",display:"flex",alignItems:"center",justifyContent:"center",gap:"14px"}}>
-          <span style={{fontSize:"13px",color:"rgba(255,255,255,0.8)"}}>Subscribe to regulatory alerts</span>
-          <input placeholder="Your email address" style={{background:"rgba(255,255,255,0.08)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:"6px",padding:"9px 14px",fontSize:"13px",color:"#fff",outline:"none",width:"240px"}}/>
-          <button onClick={onBack} style={{fontSize:"12px",fontWeight:700,letterSpacing:"0.08em",color:"#fff",background:"#1D4ED8",border:"none",borderRadius:"6px",padding:"10px 20px",cursor:"pointer"}}>SIGN UP</button>
+          <p style={{fontSize:"11px",color:"#94A3B8",margin:"18px 0 0",lineHeight:1.6}}>
+            AILA · Regulatory Intelligence — generated analysis for informational purposes only, not legal advice.
+          </p>
         </div>
       </div>
     </div>
   );
 }
 
-function SMEAssistant({ onAsk }: { onAsk: (q: string) => void }) {
+const CRAWL_CAPTIONS = [
+  "Rotating regulatory graph…",
+  "Scanning jurisdictions…",
+  "Matching instruments…",
+  "Locating relevant node…",
+];
+
+/** A small rotating graph-DB that sweeps and lights up nodes — the chatbot's "thinking" state. */
+function CrawlerGraphLoader() {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const [phase, setPhase] = useState(0);
+
+  useEffect(() => {
+    const ci = setInterval(() => setPhase(p => (p + 1) % CRAWL_CAPTIONS.length), 850);
+    const c = ref.current; if (!c) return;
+    const ctx = c.getContext("2d"); if (!ctx) return;
+    const DPR = Math.min(2, window.devicePixelRatio || 1);
+    const W = 300, H = 138;
+    c.width = W * DPR; c.height = H * DPR; c.style.width = W + "px"; c.style.height = H + "px";
+    ctx.scale(DPR, DPR);
+
+    const N = 18;
+    const nodes = Array.from({ length: N }, () => {
+      const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1), R = 42 + Math.random() * 10;
+      return { x: R * Math.sin(ph) * Math.cos(th), y: R * Math.cos(ph) * 0.66, z: R * Math.sin(ph) * Math.sin(th) };
+    });
+    const edges: [number, number][] = [];
+    for (let i = 0; i < N; i++) {
+      let b = -1, bd = 1e9;
+      for (let j = 0; j < N; j++) {
+        if (j === i) continue;
+        const dd = (nodes[i].x-nodes[j].x)**2 + (nodes[i].y-nodes[j].y)**2 + (nodes[i].z-nodes[j].z)**2;
+        if (dd < bd) { bd = dd; b = j; }
+      }
+      if (b >= 0) edges.push([i, b]);
+    }
+
+    let raf = 0, t = 0, target = Math.floor(Math.random() * N), lastSwitch = 0;
+    const cx = W / 2, cy = H / 2;
+    const loop = () => {
+      t += 16;
+      const yaw = t * 0.001;
+      if (t - lastSwitch > 1250) { target = Math.floor(Math.random() * N); lastSwitch = t; }
+      ctx.clearRect(0, 0, W, H);
+
+      const proj = nodes.map(n => {
+        const x = n.x * Math.cos(yaw) - n.z * Math.sin(yaw);
+        const z = n.x * Math.sin(yaw) + n.z * Math.cos(yaw);
+        const s = 170 / (170 + z);
+        return { x: cx + x * s, y: cy + n.y * s, z, s };
+      });
+
+      ctx.lineWidth = 1;
+      for (const [a, b] of edges) {
+        const pa = proj[a], pb = proj[b];
+        const al = Math.max(0.06, 0.12 + (Math.min(pa.s, pb.s) - 0.7) * 0.45);
+        ctx.strokeStyle = `rgba(148,163,184,${al})`;
+        ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+      }
+
+      const order = [...proj.keys()].sort((i, j) => proj[i].z - proj[j].z);
+      const tp = Math.min(1, (t - lastSwitch) / 700);
+      const glow = Math.sin(tp * Math.PI); // ease the highlight in and out
+      for (const i of order) {
+        const p = proj[i], base = 2.2 * p.s;
+        if (i === target) {
+          ctx.save();
+          ctx.shadowColor = "#1E3A5F"; ctx.shadowBlur = 18 * glow;
+          ctx.beginPath(); ctx.arc(p.x, p.y, base + 5 + glow * 11, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(30,58,95,${0.55 * glow})`; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.beginPath(); ctx.arc(p.x, p.y, base + 1.6, 0, Math.PI * 2);
+          ctx.fillStyle = "#1E3A5F"; ctx.fill();
+          ctx.restore();
+        } else {
+          ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(1.4, base), 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(100,116,139,${Math.max(0.25, 0.4 + (p.s - 0.7) * 0.8)})`;
+          ctx.fill();
+        }
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(raf); clearInterval(ci); };
+  }, []);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+      <canvas ref={ref} style={{ display: "block" }} />
+      <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+        <span style={{ width: "5px", height: "5px", borderRadius: "50%", background: "#1E3A5F", boxShadow: "0 0 6px #1E3A5F", animation: "pulse 1.1s ease-in-out infinite" }} />
+        <span style={{ fontSize: "12px", color: "#64748B", fontFamily: "IBM Plex Sans, sans-serif" }}>{CRAWL_CAPTIONS[phase]}</span>
+      </div>
+    </div>
+  );
+}
+
+function SMEAssistant({ onAsk }: { onAsk: (q: string, result: RagResult|null) => void }) {
+  const base=(import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
   const [msgs,setMsgs]=useState<ChatMsg[]>(INIT_MSGS);
   const [input,setInput]=useState("");
   const [pending,setPending]=useState(false);
   const end=useRef<HTMLDivElement>(null);
   useEffect(()=>{ end.current?.scrollIntoView({behavior:"smooth"}); },[msgs,pending]);
 
-  const send=()=>{
+  const send=async()=>{
     if (!input.trim()||pending) return;
     const q=input.trim();
     setInput("");
     setMsgs(m=>[...m,{role:"user",text:q}]);
     setPending(true);
-    // brief "analyzing" beat, then redirect to the full answer page
-    setTimeout(()=>{ setPending(false); onAsk(q); },1400);
+    // RAG: retrieve + grounded answer, then redirect to the full answer page.
+    const started=Date.now();
+    let result:RagResult|null=null;
+    try{
+      if(base){
+        const r=await fetch(`${base}/rag/query`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question:q})});
+        if(r.ok) result=await r.json();
+      }
+    }catch{ /* fall back to static answer */ }
+    // keep the search animation visible for at least ~1.4s so it doesn't flash
+    const wait=Math.max(0,1400-(Date.now()-started));
+    setTimeout(()=>{ setPending(false); onAsk(q,result); },wait);
   };
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8 flex flex-col" style={{height:"calc(100vh - 56px)"}}>
       <div className="flex items-center gap-3 mb-4">
-        <MessageSquare size={18} style={{color:"#3B82F6"}}/>
+        <MessageSquare size={18} style={{color:"#1E3A5F"}}/>
         <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Legal Research Assistant</h1>
         <div className="ml-auto flex items-center gap-2 text-xs px-2.5 py-1 rounded-full"
           style={{background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.2)",color:"#10B981"}}>
@@ -2043,7 +2430,7 @@ function SMEAssistant({ onAsk }: { onAsk: (q: string) => void }) {
         {["Can I store health data offshore?","Cross-border transfer rules","Fintech licensing in SG","AI regulation requirements"].map(q=>(
           <button key={q} onClick={()=>setInput(q)}
             className="text-xs px-3 py-1.5 rounded-full transition-colors"
-            style={{background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.2)",color:"#1D4ED8"}}>
+            style={{background:"rgba(30,58,95,0.08)",border:"1px solid rgba(30,58,95,0.2)",color:"#1E3A5F"}}>
             {q}
           </button>
         ))}
@@ -2054,8 +2441,8 @@ function SMEAssistant({ onAsk }: { onAsk: (q: string) => void }) {
           <div key={i} className={`flex gap-3 ${m.role==="user"?"justify-end":""}`}>
             {m.role==="ai"&&(
               <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-                style={{background:"rgba(59,130,246,0.15)",border:"1px solid rgba(59,130,246,0.3)"}}>
-                <Brain size={13} style={{color:"#60A5FA"}}/>
+                style={{background:"rgba(30,58,95,0.15)",border:"1px solid rgba(30,58,95,0.3)"}}>
+                <Brain size={13} style={{color:"#475569"}}/>
               </div>
             )}
             <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${m.role==="user"?"max-w-sm rounded-tr-sm":"max-w-lg rounded-tl-sm"}`}
@@ -2067,17 +2454,12 @@ function SMEAssistant({ onAsk }: { onAsk: (q: string) => void }) {
         {pending&&(
           <div className="flex gap-3">
             <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-              style={{background:"rgba(59,130,246,0.15)",border:"1px solid rgba(59,130,246,0.3)"}}>
-              <Brain size={13} style={{color:"#60A5FA"}}/>
+              style={{background:"rgba(30,58,95,0.15)",border:"1px solid rgba(30,58,95,0.3)"}}>
+              <Brain size={13} style={{color:"#475569"}}/>
             </div>
-            <div className="rounded-2xl rounded-tl-sm px-4 py-3 text-sm flex items-center gap-2.5"
-              style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.07)",color:"#64748B"}}>
-              <span style={{display:"flex",gap:"3px",alignItems:"center"}}>
-                {[0,1,2].map(k=>(
-                  <span key={k} style={{width:"5px",height:"5px",borderRadius:"50%",background:"#60A5FA",display:"inline-block",animation:`pulse 1.2s ease-in-out ${k*0.2}s infinite`}}/>
-                ))}
-              </span>
-              Researching ASEAN corpus & your documents…
+            <div className="rounded-2xl rounded-tl-sm px-4 py-3.5"
+              style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.07)"}}>
+              <CrawlerGraphLoader/>
             </div>
           </div>
         )}
@@ -2091,7 +2473,7 @@ function SMEAssistant({ onAsk }: { onAsk: (q: string) => void }) {
           style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.1)",color:"#0F172A",fontFamily:"Inter, sans-serif"}}/>
         <button onClick={send}
           className="px-4 py-3 rounded-xl flex items-center justify-center"
-          style={{background:"#1D4ED8",border:"1px solid rgba(29,78,216,0.5)"}}>
+          style={{background:"#1E3A5F",border:"1px solid rgba(29,78,216,0.5)"}}>
           <Send size={16} style={{color:"#fff"}}/>
         </button>
       </div>
@@ -2104,7 +2486,7 @@ function CountriesView() {
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
       <div className="flex items-center gap-3 mb-6">
-        <Globe size={18} style={{color:"#1D4ED8"}}/>
+        <Globe size={18} style={{color:"#1E3A5F"}}/>
         <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Jurisdiction Overview</h1>
       </div>
       <div className="grid grid-cols-3 gap-4">
@@ -2121,12 +2503,12 @@ function CountriesView() {
                   <p className="text-xs" style={{color:"#64748B"}}>{data.regulations.length} regulations tracked</p>
                 </div>
                 <div className="ml-auto text-right">
-                  <div className="text-lg font-bold" style={{color:data.color,fontFamily:"JetBrains Mono, monospace"}}>{score}%</div>
+                  <div className="text-lg font-bold" style={{color:"#1E3A5F",fontFamily:"JetBrains Mono, monospace"}}>{score}%</div>
                   <div className="text-xs" style={{color:"#64748B"}}>compliance</div>
                 </div>
               </div>
               <div className="h-1 rounded-full overflow-hidden mb-3" style={{background:"rgba(0,0,0,0.07)"}}>
-                <div className="h-full rounded-full" style={{width:`${score}%`,background:data.color}}/>
+                <div className="h-full rounded-full" style={{width:`${score}%`,background:"#1E3A5F"}}/>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 {[{l:"Regulations",v:data.regulations.length},{l:"Amendments",v:amends},{l:"Clauses",v:data.regulations.reduce((a,r)=>a+r.clauses,0)}].map(s=>(
@@ -2149,23 +2531,23 @@ function MemoryLayer() {
   const events=[
     {flag:"VN",label:"VN Cybersecurity Law — Amendment 2024",cat:"Amendment",date:"2024-02-28",size:"2.3 MB",c:"#EF4444"},
     {flag:"SG",label:"SG PDPA — Updated Prescribed Periods",cat:"Regulation",date:"2024-01-15",size:"1.1 MB",c:"#10B981"},
-    {flag:"PH",label:"PH DPA — NPC Advisory No. 2023-01",cat:"Advisory",date:"2023-11-30",size:"0.8 MB",c:"#3B82F6"},
-    {flag:"ID",label:"ID PDP Law — Full Implementation Text",cat:"Regulation",date:"2023-10-17",size:"4.7 MB",c:"#8B5CF6"},
+    {flag:"PH",label:"PH DPA — NPC Advisory No. 2023-01",cat:"Advisory",date:"2023-11-30",size:"0.8 MB",c:"#1E3A5F"},
+    {flag:"ID",label:"ID PDP Law — Full Implementation Text",cat:"Regulation",date:"2023-10-17",size:"4.7 MB",c:"#334155"},
     {flag:"TH",label:"TH Computer Crimes Act — Third Amendment",cat:"Amendment",date:"2023-08-22",size:"1.4 MB",c:"#F59E0B"},
-    {flag:"MY",label:"MY PDPA — Proposed Amendments 2023",cat:"Draft",date:"2023-07-01",size:"2.1 MB",c:"#22D3EE"},
+    {flag:"MY",label:"MY PDPA — Proposed Amendments 2023",cat:"Draft",date:"2023-07-01",size:"2.1 MB",c:"#64748B"},
     {flag:"SG",label:"SG Payment Services Act — MAS Notice PSN02",cat:"Notice",date:"2023-05-14",size:"0.5 MB",c:"#10B981"},
   ];
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
-          <Database size={18} style={{color:"#8B5CF6"}}/>
+          <Database size={18} style={{color:"#334155"}}/>
           <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Regulatory Memory Layer</h1>
         </div>
         <div className="flex gap-3 text-xs">
           {[{l:"Total Documents",v:"2,847"},{l:"Memory Size",v:"142.7 GB"},{l:"Retrieval Speed",v:"84ms avg"}].map(s=>(
-            <div key={s.l} className="text-center px-3 py-1.5 rounded-lg" style={{background:"rgba(139,92,246,0.08)",border:"1px solid rgba(139,92,246,0.18)"}}>
-              <div className="font-bold" style={{color:"#A78BFA",fontFamily:"JetBrains Mono, monospace"}}>{s.v}</div>
+            <div key={s.l} className="text-center px-3 py-1.5 rounded-lg" style={{background:"rgba(30,58,95,0.08)",border:"1px solid rgba(30,58,95,0.18)"}}>
+              <div className="font-bold" style={{color:"#475569",fontFamily:"JetBrains Mono, monospace"}}>{s.v}</div>
               <div style={{color:"#64748B"}}>{s.l}</div>
             </div>
           ))}
@@ -2203,20 +2585,20 @@ function APIView() {
     {method:"GET",path:"/v1/graph",desc:"Export regulatory knowledge graph in JSON or Cytoscape format"},
     {method:"POST",path:"/v1/query",desc:"Natural language query against the regulatory memory layer"},
   ];
-  const mc:{[k:string]:string}={GET:"#10B981",POST:"#3B82F6",DELETE:"#EF4444"};
+  const mc:{[k:string]:string}={GET:"#10B981",POST:"#1E3A5F",DELETE:"#EF4444"};
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
       <div className="flex items-center gap-3 mb-6">
-        <Code2 size={18} style={{color:"#1D4ED8"}}/>
+        <Code2 size={18} style={{color:"#1E3A5F"}}/>
         <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>API Reference</h1>
-        <span className="text-xs px-2 py-0.5 rounded" style={{background:"rgba(59,130,246,0.1)",color:"#1D4ED8",border:"1px solid rgba(59,130,246,0.25)"}}>v1.4.2</span>
+        <span className="text-xs px-2 py-0.5 rounded" style={{background:"rgba(30,58,95,0.1)",color:"#1E3A5F",border:"1px solid rgba(30,58,95,0.25)"}}>v1.4.2</span>
       </div>
 
       <div className="rounded-xl mb-4 p-4" style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.08)"}}>
         <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{color:"#64748B",fontFamily:"IBM Plex Sans, sans-serif"}}>Authentication</p>
         <div className="rounded-lg px-3 py-2" style={{background:"#F8FAFC",border:"1px solid rgba(0,0,0,0.08)"}}>
-          <code className="text-xs" style={{color:"#0891B2",fontFamily:"JetBrains Mono, monospace"}}>
+          <code className="text-xs" style={{color:"#334155",fontFamily:"JetBrains Mono, monospace"}}>
             Authorization: Bearer {"<YOUR_AILA_API_KEY>"}
           </code>
         </div>
@@ -2266,14 +2648,14 @@ function SettingsView() {
         {[
           {title:"AI Engine",items:[
             {l:"Model",v:<select value={vals.aiModel} onChange={e=>setVals(v=>({...v,aiModel:e.target.value}))} className="rounded px-2 py-1 text-xs outline-none" style={{background:"#F8FAFC",border:"1px solid rgba(0,0,0,0.1)",color:"#374151"}}><option value="claude-sonnet-4-6">Claude Sonnet 4.6</option><option value="claude-opus-4-7">Claude Opus 4.7</option></select>},
-            {l:"Semantic Diff Engine",v:<button onClick={()=>toggle("semanticDiff")} className="w-9 h-5 rounded-full transition-colors relative" style={{background:vals.semanticDiff?"#1D4ED8":"#E2E8F0"}}><span className="absolute top-0.5 w-4 h-4 rounded-full transition-all" style={{background:"#fff",left:vals.semanticDiff?"calc(100% - 18px)":"2px"}}/></button>},
+            {l:"Semantic Diff Engine",v:<button onClick={()=>toggle("semanticDiff")} className="w-9 h-5 rounded-full transition-colors relative" style={{background:vals.semanticDiff?"#1E3A5F":"#E2E8F0"}}><span className="absolute top-0.5 w-4 h-4 rounded-full transition-all" style={{background:"#fff",left:vals.semanticDiff?"calc(100% - 18px)":"2px"}}/></button>},
           ]},
           {title:"Crawler Settings",items:[
             {l:"Crawl Interval",v:<select value={vals.crawlInterval} onChange={e=>setVals(v=>({...v,crawlInterval:e.target.value}))} className="rounded px-2 py-1 text-xs outline-none" style={{background:"#F8FAFC",border:"1px solid rgba(0,0,0,0.1)",color:"#374151"}}><option value="1h">Every 1 hour</option><option value="6h">Every 6 hours</option><option value="24h">Daily</option></select>},
-            {l:"Auto Memory Growth",v:<button onClick={()=>toggle("memoryAuto")} className="w-9 h-5 rounded-full transition-colors relative" style={{background:vals.memoryAuto?"#1D4ED8":"#E2E8F0"}}><span className="absolute top-0.5 w-4 h-4 rounded-full transition-all" style={{background:"#fff",left:vals.memoryAuto?"calc(100% - 18px)":"2px"}}/></button>},
+            {l:"Auto Memory Growth",v:<button onClick={()=>toggle("memoryAuto")} className="w-9 h-5 rounded-full transition-colors relative" style={{background:vals.memoryAuto?"#1E3A5F":"#E2E8F0"}}><span className="absolute top-0.5 w-4 h-4 rounded-full transition-all" style={{background:"#fff",left:vals.memoryAuto?"calc(100% - 18px)":"2px"}}/></button>},
           ]},
           {title:"Notifications",items:[
-            {l:"Amendment Alerts",v:<button onClick={()=>toggle("notifications")} className="w-9 h-5 rounded-full transition-colors relative" style={{background:vals.notifications?"#1D4ED8":"#E2E8F0"}}><span className="absolute top-0.5 w-4 h-4 rounded-full transition-all" style={{background:"#fff",left:vals.notifications?"calc(100% - 18px)":"2px"}}/></button>},
+            {l:"Amendment Alerts",v:<button onClick={()=>toggle("notifications")} className="w-9 h-5 rounded-full transition-colors relative" style={{background:vals.notifications?"#1E3A5F":"#E2E8F0"}}><span className="absolute top-0.5 w-4 h-4 rounded-full transition-all" style={{background:"#fff",left:vals.notifications?"calc(100% - 18px)":"2px"}}/></button>},
           ]},
         ].map(section=>(
           <div key={section.title} className="rounded-xl overflow-hidden" style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.08)"}}>
@@ -2299,6 +2681,7 @@ export default function App() {
   const [view,setView]=useState<ViewId>("dashboard");
   const [selNode,setSelNode]=useState<GNode|null>(null);
   const [query,setQuery]=useState("");
+  const [answer,setAnswer]=useState<RagResult|null>(null);
   const isDash=view==="dashboard"||view==="graph";
 
   const onNav=(v:ViewId)=>{
@@ -2306,7 +2689,7 @@ export default function App() {
     if (v==="dashboard"||v==="graph") setSelNode(null);
   };
 
-  const onAsk=(q:string)=>{ setQuery(q); setView("answer"); };
+  const onAsk=(q:string,result:RagResult|null)=>{ setQuery(q); setAnswer(result); setView("answer"); };
 
   const onGraphSelect=(n:GNode|null)=>{
     if (!isDash) return;
@@ -2350,19 +2733,11 @@ export default function App() {
             initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} exit={{opacity:0,y:14}}
             transition={{duration:0.3,ease:"easeOut"}}
             className="absolute inset-0 z-50">
-            <AnswerPage query={query} onBack={()=>setView("sme")}/>
+            <AnswerPage query={query} result={answer} onBack={()=>setView("sme")} onSimulate={()=>setView("simulation")}/>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {isDash && !selNode &&(
-        <div className="absolute bottom-1/2 left-1/2 -translate-x-1/2 translate-y-1/2 pointer-events-none select-none text-center"
-          style={{opacity:0.5}}>
-          <p className="text-xs tracking-widest uppercase" style={{color:"rgba(100,116,139,0.7)",fontFamily:"IBM Plex Sans, sans-serif"}}>
-            Click any node to inspect · Drag to rotate · Scroll to zoom
-          </p>
-        </div>
-      )}
     </div>
   );
 }

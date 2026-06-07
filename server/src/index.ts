@@ -1,9 +1,24 @@
 import express from "express";
 import cors from "cors";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { loadSources, loadPolicies, findSource } from "./sources.js";
 import { scrapeAll, scrapeSource } from "./scraper.js";
-import { scanAll, resolveSource } from "./scanner.js";
+import { scanAll, resolveSource, refreshHealth, activeUrlSet, healthReady, healthState } from "./scanner.js";
 import { buildGraph } from "./graph.js";
+import { classifyInstrument, classifierEnabled } from "./classify.js";
+import { runSimulation, simulationOptions } from "./simulate.js";
+import { ragQuery, buildIndex, ragStatus } from "./rag.js";
+
+// Minimal .env loader (no dependency) — reads server/.env into process.env.
+try {
+  const envPath = join(dirname(fileURLToPath(import.meta.url)), "..", ".env");
+  for (const line of readFileSync(envPath, "utf-8").split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2];
+  }
+} catch { /* no .env — fine */ }
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 8787);
@@ -59,9 +74,123 @@ app.get("/policies", (req, res) => {
   res.json({ count: rows.length, policies: rows });
 });
 
-/** GET /graph — countries as hubs, each unique crawled URL as a regulation node. */
-app.get("/graph", (_req, res) => {
-  res.json(buildGraph());
+/**
+ * GET /graph — countries as hubs, each unique crawled URL as a regulation node.
+ * Active-only by default (reachable URLs, from the health cache). Pass ?all=1 to
+ * include everything regardless of reachability.
+ */
+app.get("/graph", async (req, res) => {
+  const STALE_MS = 15 * 60 * 1000;
+  if (req.query.all === "1") return res.json({ ...buildGraph(), mode: "all" });
+
+  if (!healthReady()) {
+    await refreshHealth(loadSources()); // first request warms the cache
+  } else if (Date.now() - healthState().scannedAt > STALE_MS) {
+    void refreshHealth(loadSources()); // stale → refresh in background, serve cached now
+  }
+  res.json({ ...buildGraph(activeUrlSet()), mode: "active", health: healthState() });
+});
+
+// =============================================================================
+// AI auto-classification (Gemini)
+// =============================================================================
+
+/** GET /classify/:id — scrape a source, then classify it into pillars/policy focus. */
+app.get("/classify/:id", async (req, res) => {
+  if (!classifierEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  const source = findSource(req.params.id);
+  if (!source) return res.status(404).json({ error: `Unknown source: ${req.params.id}` });
+
+  try {
+    const scrape = await scrapeSource(source);
+    const classification = await classifyInstrument({
+      instrument: source.instrument,
+      jurisdiction: source.jurisdiction,
+      excerpt: scrape.excerpt || scrape.title,
+    });
+    res.json({
+      sourceId: source.id,
+      instrument: source.instrument,
+      jurisdiction: source.jurisdiction,
+      url: source.url,
+      reachable: scrape.ok,
+      classification,
+    });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** POST /classify — classify an ad-hoc instrument: { instrument, excerpt?, jurisdiction?, url? }.
+ *  If a url is given and no excerpt, the page is scraped first for context. */
+app.post("/classify", async (req, res) => {
+  if (!classifierEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  const { instrument, excerpt, jurisdiction, url } = req.body ?? {};
+  if (!instrument) return res.status(400).json({ error: "instrument is required." });
+  try {
+    let context = excerpt as string | undefined;
+    if (!context && url) {
+      const scrape = await scrapeSource({
+        id: "adhoc", jurisdiction: jurisdiction || "Unknown", instrument,
+        url, region: "", format: "html", cadence: "monthly",
+      });
+      context = scrape.excerpt || scrape.title;
+    }
+    res.json(await classifyInstrument({ instrument, excerpt: context, jurisdiction }));
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// =============================================================================
+// Compliance simulation — the "digital twin" / what-if engine
+// =============================================================================
+
+/** GET /simulate/options — dataset-derived choices for the scenario form. */
+app.get("/simulate/options", (_req, res) => {
+  res.json(simulationOptions());
+});
+
+/** POST /simulate — run a what-if scenario against the policy dataset. */
+app.post("/simulate", async (req, res) => {
+  const scenario = req.body ?? {};
+  if (!Array.isArray(scenario.targetJurisdictions) || scenario.targetJurisdictions.length === 0) {
+    return res.status(400).json({ error: "targetJurisdictions[] is required." });
+  }
+  try {
+    res.json(await runSimulation(scenario));
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// =============================================================================
+// RAG — grounded Q&A over the live regulation corpus (citation-first)
+// =============================================================================
+
+/** GET /rag/status — index readiness. */
+app.get("/rag/status", (_req, res) => res.json(ragStatus()));
+
+/** POST /rag/index — (re)build the embedding index. */
+app.post("/rag/index", async (_req, res) => {
+  if (!classifierEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  try {
+    res.json(await buildIndex());
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** POST /rag/query — retrieve + answer with real citations. */
+app.post("/rag/query", async (req, res) => {
+  if (!classifierEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  const { question } = req.body ?? {};
+  if (!question || typeof question !== "string") return res.status(400).json({ error: "question is required." });
+  try {
+    res.json(await ragQuery(question));
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 /** POST /scrape — scrape all sources, or a subset via ?region= / body.ids. */
@@ -186,4 +315,17 @@ app.get("/alerts", (_req, res) => res.json(alerts));
 app.listen(PORT, () => {
   console.log(`AILA backend listening on http://localhost:${PORT}`);
   console.log(`Loaded ${loadPolicies().length} policy rows → ${loadSources().length} unique crawl targets.`);
+  console.log(`AI classifier: ${classifierEnabled() ? `enabled (${process.env.GEMINI_MODEL || "gemini-2.5-flash"})` : "disabled (set GEMINI_API_KEY)"}.`);
+  // Warm the active-URL health cache, then build the RAG index — both in the
+  // background so /graph and /rag/query are fast once a user arrives.
+  console.log("Warming link-health cache…");
+  void refreshHealth(loadSources()).then(() => {
+    console.log(`Health cache ready: ${activeUrlSet().size}/${loadSources().length} URLs active.`);
+    if (classifierEnabled()) {
+      console.log("Building RAG index…");
+      void buildIndex()
+        .then((r) => console.log(`RAG index ready: ${r.chunks} chunks from ${r.sources} sources.`))
+        .catch((e) => console.log(`RAG index build failed: ${e.message}`));
+    }
+  });
 });

@@ -50,6 +50,47 @@ export function classify(status: number, ok: boolean, error?: string): LinkHealt
 /** Anything that could plausibly be fixed by finding a new URL. */
 const isRecoverable = (h: LinkHealth) => h === "dead" || h === "error" || h === "timeout";
 
+// ---------------------------------------------------------------------------
+// Health cache — fast reachability probe results, used to serve only ACTIVE URLs
+// ---------------------------------------------------------------------------
+
+const healthCache = new Map<string, LinkHealth>();
+let healthScanning = false;
+let healthScannedAt = 0;
+
+export function healthState() {
+  return { scanning: healthScanning, scannedAt: healthScannedAt, count: healthCache.size };
+}
+export function healthReady() {
+  return healthCache.size > 0 && !healthScanning;
+}
+/** URLs that are reachable (live). */
+export function activeUrlSet(): Set<string> {
+  const set = new Set<string>();
+  for (const [url, h] of healthCache) if (h === "live" || h === "redirected") set.add(url);
+  return set;
+}
+
+/** Probe every source (HEAD-ish GET, follows redirects) and cache link health. */
+export async function refreshHealth(sources: RegulationSource[], concurrency = 10): Promise<void> {
+  if (healthScanning) return;
+  healthScanning = true;
+  try {
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < sources.length) {
+        const s = sources[cursor++];
+        const p = await probeUrl(s.url, 9000);
+        healthCache.set(s.url, classify(p.status, p.ok, p.error));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, sources.length) }, worker));
+    healthScannedAt = Date.now();
+  } finally {
+    healthScanning = false;
+  }
+}
+
 /** Scan every source and classify link health. */
 export async function scanAll(sources: RegulationSource[]): Promise<ScanEntry[]> {
   const scraped = await scrapeAll(sources, 5);

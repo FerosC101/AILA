@@ -45,7 +45,21 @@ VITE_AILA_API_BASE_URL=http://localhost:8787
 | GET    | `/scan`        | Classify every link: `live` / `redirected` / `dead` / `blocked` / `timeout` / `error` |
 | GET    | `/resolve/:id` | Suggest a working replacement URL for one source |
 | POST   | `/resolve`     | Scan all, then suggest fixes for every dead/error/timeout source |
+| GET    | `/classify/:id`| AI-classify a source into pillars / policy focus (Gemini) |
+| POST   | `/classify`    | AI-classify an ad-hoc `{ instrument, excerpt?, jurisdiction? }` |
 | GET    | `/health`      | Liveness check |
+
+### AI auto-classification (Gemini)
+
+`/classify` maps an instrument onto the dataset's controlled vocabularies — the two
+**pillars** and the **policy-focus** taxonomy — so newly scraped sources can be
+tagged automatically. It scrapes the source for context, sends title + excerpt to
+Gemini, and returns validated labels (values outside the taxonomy are dropped).
+
+Set `GEMINI_API_KEY` (+ optional `GEMINI_MODEL`, default `gemini-2.5-flash`) in
+`.env`. Get a key at <https://aistudio.google.com/apikey>; its project needs the
+Generative Language API enabled with free-tier quota, otherwise the call returns
+`429 (limit: 0)`. Without a key, `/classify` returns `503`.
 
 ### Dead-link scanner
 

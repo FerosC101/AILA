@@ -55,7 +55,7 @@ const uniq = (xs: (string | undefined)[]) =>
  * curated sources) links straight to its country hub. Policy-measure rows that
  * share a (country, url) collapse into one regulation node.
  */
-export function buildGraph(): GraphPayload {
+export function buildGraph(activeUrls?: Set<string>): GraphPayload {
   const policies = loadPolicies();
 
   const countries = new Map<string, GraphNode>();
@@ -69,6 +69,9 @@ export function buildGraph(): GraphPayload {
   };
 
   for (const p of policies) {
+    // active-only mode: drop policy rows whose URL isn't reachable
+    if (activeUrls && !activeUrls.has(p.url)) continue;
+
     const countryId = `country:${slug(p.jurisdiction)}`;
     if (!countries.has(countryId)) {
       countries.set(countryId, {
@@ -117,6 +120,10 @@ export function buildGraph(): GraphPayload {
       weight: _rows.length,
     };
   });
+
+  // prune country hubs that ended up with no children (e.g. all their URLs dead)
+  const edgeSources = new Set([...edges.values()].map((e) => e.source));
+  for (const id of [...countries.keys()]) if (!edgeSources.has(id)) countries.delete(id);
 
   const byCountry: Record<string, number> = {};
   for (const r of regNodes) byCountry[r.country] = (byCountry[r.country] ?? 0) + 1;
