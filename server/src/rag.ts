@@ -3,7 +3,7 @@
 // index → cosine retrieval → grounded answer with real citations + confidence.
 
 import * as cheerio from "cheerio";
-import { fetchText } from "./scraper.js";
+import { fetchText, fetchPdfText } from "./scraper.js";
 import { loadSources } from "./sources.js";
 import { activeUrlSet, healthReady, refreshHealth } from "./scanner.js";
 
@@ -77,7 +77,12 @@ function chunkText(t: string): string[] {
   return chunks;
 }
 
-async function pageText(url: string): Promise<string> {
+async function pageText(url: string, format: string): Promise<string> {
+  // PDFs: extract real text (clause-level evidence); HTML: cheerio body text.
+  if (format === "pdf" || /\.pdf(\?|#|$)/i.test(url)) {
+    const pdf = await fetchPdfText(url, 25000, PAGE_CHARS).catch(() => null);
+    return pdf ?? "";
+  }
   const html = await fetchText(url, 12000);
   if (!html) return "";
   const $ = cheerio.load(html);
@@ -101,7 +106,7 @@ export async function buildIndex(): Promise<{ chunks: number; sources: number }>
     const worker = async () => {
       while (cursor < sources.length) {
         const idx = cursor++;
-        texts[idx] = await pageText(sources[idx].url).catch(() => "");
+        texts[idx] = await pageText(sources[idx].url, sources[idx].format).catch(() => "");
       }
     };
     await Promise.all(Array.from({ length: 6 }, worker));

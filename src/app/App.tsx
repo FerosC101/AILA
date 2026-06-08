@@ -1153,7 +1153,7 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
 }
 
 // ==================== INTELLIGENCE DRAWER ====================
-type AIClass = { pillars:string[]; policyFocus:string[]; coverage:string; rationale:string; model:string };
+type AIClass = { rdtii?:Array<{code:string;name:string}>; pillars:string[]; policyFocus:string[]; coverage:string; rationale:string; model:string };
 function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>void;side?:"right"|"left"}) {
   const details=node.details;
   const isC=node.type==="country";
@@ -1232,6 +1232,16 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
             )}
             {aiState==="done"&&ai&&(
               <div className="px-3 py-3 space-y-2.5" style={{background:"#F8FAFC"}}>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-widest mb-1" style={{color:"#94A3B8",fontFamily:"IBM Plex Sans, sans-serif"}}>RDTII Categories</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ai.rdtii&&ai.rdtii.length?ai.rdtii.map(c=>(
+                      <span key={c.code} className="text-xs px-2 py-0.5 rounded-full inline-flex items-center gap-1" style={{background:h2r(NAVY,0.1),color:NAVY,border:`1px solid ${h2r(NAVY,0.25)}`}}>
+                        <span style={{fontFamily:"JetBrains Mono, monospace",fontSize:"9px",opacity:0.7}}>{c.code}</span>{c.name}
+                      </span>
+                    )):<span className="text-xs" style={{color:"#94A3B8"}}>—</span>}
+                  </div>
+                </div>
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-widest mb-1" style={{color:"#94A3B8",fontFamily:"IBM Plex Sans, sans-serif"}}>Pillars</div>
                   <div className="flex flex-wrap gap-1.5">
@@ -2075,20 +2085,38 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
                     ⚠ Limited evidence in the corpus for this question — treat the answer as indicative and verify against the cited sources.
                   </div>
                 )}
-                <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#0F172A",margin:"0 0 14px"}}>Evidence &amp; Citations</h2>
-                <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+                <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#0F172A",margin:"0 0 4px"}}>Evidence Viewer</h2>
+                <p style={{fontSize:"12px",color:"#94A3B8",margin:"0 0 14px"}}>Source text on the left, the extracted citation on the right — audit each claim against its origin.</p>
+                {/* column headers */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginBottom:"6px"}}>
+                  <span style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"#94A3B8",fontFamily:"IBM Plex Sans, sans-serif"}}>Source Excerpt</span>
+                  <span style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"#94A3B8",fontFamily:"IBM Plex Sans, sans-serif"}}>Extracted Evidence</span>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
                   {result.citations.map(c=>(
-                    <div key={c.n} style={{border:"1px solid #E5E9F0",borderRadius:"10px",padding:"14px 16px"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}}>
-                        <span style={{fontSize:"11px",fontWeight:700,color:"#fff",background:"#1E3A5F",borderRadius:"5px",padding:"1px 7px",fontFamily:"JetBrains Mono, monospace"}}>[{c.n}]</span>
-                        <span style={{fontSize:"13px",fontWeight:600,color:"#0F172A"}}>{c.instrument}</span>
-                        <span style={{fontSize:"11px",color:"#94A3B8"}}>{c.jurisdiction}</span>
-                        <span style={{marginLeft:"auto",fontSize:"10px",color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>match {Math.round(c.score*100)}%</span>
+                    <div key={c.n} style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",border:"1px solid #E5E9F0",borderRadius:"10px",overflow:"hidden"}}>
+                      {/* LEFT — verbatim source */}
+                      <div style={{padding:"12px 14px",borderRight:"1px solid #E5E9F0",background:"#FAFBFC"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"6px"}}>
+                          <span style={{fontSize:"11px",fontWeight:700,color:"#fff",background:"#1E3A5F",borderRadius:"5px",padding:"1px 7px",fontFamily:"JetBrains Mono, monospace"}}>[{c.n}]</span>
+                          <span style={{fontSize:"10px",color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{(()=>{try{return new URL(c.url).hostname;}catch{return "source";}})()}</span>
+                        </div>
+                        <p style={{fontSize:"12px",lineHeight:1.65,color:"#475569",margin:0,fontFamily:"Georgia, serif",fontStyle:"italic"}}>&ldquo;{c.snippet}&rdquo;</p>
                       </div>
-                      <p style={{fontSize:"12.5px",lineHeight:1.6,color:"#475569",margin:"0 0 8px"}}>{c.snippet}</p>
-                      <a href={c.url} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:"5px",fontSize:"11px",fontWeight:600,color:"#1E3A5F",textDecoration:"none"}}>
-                        <Link size={11}/>{(()=>{try{return new URL(c.url).hostname;}catch{return "source";}})()} ↗
-                      </a>
+                      {/* RIGHT — structured extraction */}
+                      <div style={{padding:"12px 14px"}}>
+                        <p style={{fontSize:"13px",fontWeight:600,color:"#0F172A",margin:"0 0 2px"}}>{c.instrument}</p>
+                        <p style={{fontSize:"11px",color:"#64748B",margin:"0 0 8px"}}>{c.jurisdiction}</p>
+                        <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px"}}>
+                          <div style={{flex:1,height:"4px",borderRadius:"4px",background:"#E5E9F0",overflow:"hidden"}}>
+                            <div style={{height:"100%",width:`${Math.round(c.score*100)}%`,background:"#1E3A5F"}}/>
+                          </div>
+                          <span style={{fontSize:"10px",color:"#64748B",fontFamily:"JetBrains Mono, monospace"}}>{Math.round(c.score*100)}% match</span>
+                        </div>
+                        <a href={c.url} target="_blank" rel="noreferrer" style={{display:"inline-flex",alignItems:"center",gap:"5px",fontSize:"11px",fontWeight:600,color:"#1E3A5F",textDecoration:"none"}}>
+                          <Link size={11}/> Open source ↗
+                        </a>
+                      </div>
                     </div>
                   ))}
                 </div>

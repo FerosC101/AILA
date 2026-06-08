@@ -16,7 +16,8 @@
       "Bash(pkill -f \"tsx src/index.ts\")",
       "Bash(python3 -c ' *)",
       "Bash(grep -n \"function AnswerPage\\\\|===== HERO\\\\|id=\\\\\"analysis\\\\\"\\\\|>Full Analysis<\\\\|Legal Sources\\\\|===== FULL ANALYSIS\\\\|{r.sections.map\\\\|<h1 style={{fontFamily:serif,fontSize:\\\\\"42px\\\\\"\" src/app/App.tsx)",
-      "Bash(grep -n \"const onAsk=\\\\|const \\\\[query,setQuery\\\\]\\\\|<AnswerPage query=\\\\|onAsk={onAsk}\\\\|function SMEAssistant\" src/app/App.tsx)"
+      "Bash(grep -n \"const onAsk=\\\\|const \\\\[query,setQuery\\\\]\\\\|<AnswerPage query=\\\\|onAsk={onAsk}\\\\|function SMEAssistant\" src/app/App.tsx)",
+      "Bash(echo \"backend tsc: $?\")"
     ]
   }
 }

@@ -54,6 +54,26 @@ export async function probeUrl(
   }
 }
 
+/** Extract text from a PDF URL via unpdf (pdf.js). Returns cleaned text or null. */
+export async function fetchPdfText(url: string, timeoutMs = 25_000, maxChars = 12_000): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { headers: BROWSER_HEADERS, redirect: "follow", signal: controller.signal });
+    if (!res.ok) return null;
+    const buf = new Uint8Array(await res.arrayBuffer());
+    const { extractText, getDocumentProxy } = await import("unpdf");
+    const pdf = await getDocumentProxy(buf);
+    const { text } = await extractText(pdf, { mergePages: true });
+    const clean = (Array.isArray(text) ? text.join(" ") : text).replace(/\s+/g, " ").trim();
+    return clean ? clean.slice(0, maxChars) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Fetch raw text (for sitemap/XML parsing) with a small size guard. */
 export async function fetchText(url: string, timeoutMs = 12_000): Promise<string | null> {
   const controller = new AbortController();
@@ -101,12 +121,13 @@ export async function scrapeSource(source: RegulationSource): Promise<ScrapeResu
       return base;
     }
 
-    // PDFs: we don't parse binary here — just confirm reachability.
+    // PDFs: extract text with unpdf so they feed retrieval + evidence.
     const contentType = res.headers.get("content-type") ?? "";
-    if (source.format === "pdf" || contentType.includes("application/pdf")) {
+    if (source.format === "pdf" || contentType.includes("application/pdf") || /\.pdf(\?|#|$)/i.test(source.url)) {
       base.ok = true;
       base.title = source.instrument;
-      base.excerpt = "PDF document reached (binary not parsed in prototype).";
+      const text = await fetchPdfText(source.url).catch(() => null);
+      base.excerpt = text ? text.slice(0, MAX_EXCERPT) : "PDF reached but no extractable text (likely scanned — needs OCR).";
       return base;
     }
 

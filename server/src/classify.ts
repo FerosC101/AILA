@@ -3,6 +3,28 @@
 // (the two pillars + the policy-focus taxonomy), so new sources can be tagged
 // automatically instead of by hand.
 
+// UN ESCAP RDTII-aligned regulatory categories for digital trade & data governance.
+// {code, name} pairs — codes follow the RDTII pillar groupings (DP=data, CB=cross-border,
+// CS=cybersecurity, ET=e-transactions, CP=consumer, IP=IP, CO=competition, MA=market access).
+// Reconcile `name` strings with the official RDTII codebook if a newer version is published.
+export const RDTII_CATEGORIES: Array<{ code: string; name: string }> = [
+  { code: "DP-1", name: "Personal data protection & privacy" },
+  { code: "DP-2", name: "Sensitive / special-category data" },
+  { code: "CB-1", name: "Cross-border data flows" },
+  { code: "CB-2", name: "Data localization / residency" },
+  { code: "CS-1", name: "Cybersecurity & critical information infrastructure" },
+  { code: "CS-2", name: "Lawful access / government surveillance" },
+  { code: "ET-1", name: "Electronic transactions & e-signatures" },
+  { code: "ET-2", name: "Digital trade facilitation & paperless trade" },
+  { code: "CP-1", name: "Online consumer protection" },
+  { code: "CP-2", name: "Content regulation & intermediary liability" },
+  { code: "IP-1", name: "Intellectual property in digital trade" },
+  { code: "CO-1", name: "Competition & platform regulation" },
+  { code: "MA-1", name: "Market access & digital taxation/tariffs" },
+  { code: "FN-1", name: "Digital payments & fintech" },
+];
+const RDTII_NAMES = RDTII_CATEGORIES.map((c) => c.name);
+
 const TAXONOMY = {
   pillars: [
     "Cross-border data policies",
@@ -23,6 +45,7 @@ const TAXONOMY = {
 };
 
 export interface Classification {
+  rdtii: Array<{ code: string; name: string }>;
   pillars: string[];
   policyFocus: string[];
   coverage: string;
@@ -45,9 +68,10 @@ export async function classifyInstrument(input: ClassifyInput): Promise<Classifi
   if (!key) throw new Error("GEMINI_API_KEY is not set.");
   const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
-  const prompt = `You classify digital-trade and data-governance legal instruments onto fixed vocabularies.
-Pick ALL applicable values; if uncertain choose the closest. Use ONLY values from the lists.
+  const prompt = `You classify digital-trade and data-governance legal instruments onto fixed UN ESCAP RDTII vocabularies.
+Pick ALL applicable values; if uncertain choose the closest. Use ONLY values from the lists (verbatim).
 
+RDTII_CATEGORIES (choose 1-4, by name): ${JSON.stringify(RDTII_NAMES)}
 PILLARS (choose 1-2): ${JSON.stringify(TAXONOMY.pillars)}
 POLICY_FOCUS (choose 1-4): ${JSON.stringify(TAXONOMY.policyFocus)}
 
@@ -56,7 +80,7 @@ Jurisdiction: ${input.jurisdiction || "Unknown"}
 Excerpt: ${(input.excerpt || "").replace(/\s+/g, " ").slice(0, 1500)}
 
 Respond ONLY with JSON of shape:
-{"pillars":[...],"policyFocus":[...],"coverage":"<short label e.g. Cross-cutting, Financial sector, Health data, Telecommunications>","rationale":"<one short sentence>"}`;
+{"rdtii":[...category names...],"pillars":[...],"policyFocus":[...],"coverage":"<short label e.g. Cross-cutting, Financial sector, Health data, Telecommunications>","rationale":"<one short sentence>"}`;
 
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
@@ -85,10 +109,14 @@ Respond ONLY with JSON of shape:
   }
 
   // keep only values that are actually in the taxonomy
+  const rdtii = (parsed.rdtii ?? [])
+    .map((name: string) => RDTII_CATEGORIES.find((c) => c.name === name))
+    .filter((c: unknown): c is { code: string; name: string } => !!c);
   const pillars = (parsed.pillars ?? []).filter((p: string) => TAXONOMY.pillars.includes(p));
   const policyFocus = (parsed.policyFocus ?? []).filter((p: string) => TAXONOMY.policyFocus.includes(p));
 
   return {
+    rdtii,
     pillars,
     policyFocus,
     coverage: typeof parsed.coverage === "string" ? parsed.coverage : "Cross-cutting",
