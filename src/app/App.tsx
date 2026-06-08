@@ -2528,14 +2528,67 @@ function CountriesView() {
 
 // ==================== MEMORY LAYER ====================
 function MemoryLayer() {
+  const [sizes, setSizes] = React.useState<{[url:string]:string}>({});
+  React.useEffect(()=>{
+    events.forEach(e=>{
+      if(!e.url) return;
+      fetch(e.url,{method:"HEAD"})
+        .then(r=>{
+          const len = r.headers.get("content-length");
+          if(len){
+            const mb = (parseInt(len)/1024/1024).toFixed(1)+" MB";
+            setSizes(prev=>({...prev,[e.url]:mb}));
+          } else {
+            setSizes(prev=>({...prev,[e.url]:"—"}));
+          }
+        })
+        .catch(()=>setSizes(prev=>({...prev,[e.url]:"—"})));
+    });
+  },[]);
   const events=[
-    {flag:"VN",label:"VN Cybersecurity Law — Amendment 2024",cat:"Amendment",date:"2024-02-28",size:"2.3 MB",c:"#EF4444"},
-    {flag:"SG",label:"SG PDPA — Updated Prescribed Periods",cat:"Regulation",date:"2024-01-15",size:"1.1 MB",c:"#10B981"},
-    {flag:"PH",label:"PH DPA — NPC Advisory No. 2023-01",cat:"Advisory",date:"2023-11-30",size:"0.8 MB",c:"#1E3A5F"},
-    {flag:"ID",label:"ID PDP Law — Full Implementation Text",cat:"Regulation",date:"2023-10-17",size:"4.7 MB",c:"#334155"},
-    {flag:"TH",label:"TH Computer Crimes Act — Third Amendment",cat:"Amendment",date:"2023-08-22",size:"1.4 MB",c:"#F59E0B"},
-    {flag:"MY",label:"MY PDPA — Proposed Amendments 2023",cat:"Draft",date:"2023-07-01",size:"2.1 MB",c:"#64748B"},
-    {flag:"SG",label:"SG Payment Services Act — MAS Notice PSN02",cat:"Notice",date:"2023-05-14",size:"0.5 MB",c:"#10B981"},
+    {flag:"AU",label:"My Health Records Act 2012",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.legislation.gov.au/C2012A00063",c:"#1E3A5F"},
+    {flag:"AU",label:"Privacy Act 1988",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.legislation.gov.au/C2004A03712",c:"#1E3A5F"},
+    {flag:"AU",label:"Singapore-Australia Free Trade Agreement",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.dfat.gov.au/trade/agreements/in-force/safta/singapore-australia-fta",c:"#1E3A5F"},
+    {flag:"AU",label:"Peru-Australia Free Trade Agreement",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.dfat.gov.au/trade/agreements/in-force/pafta/Pages/peru-australia-fta",c:"#1E3A5F"},
+    {flag:"AU",label:"Comprehensive And Progressive Agreement For Trans-Pacific Partnership",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.dfat.gov.au/trade/agreements/in-force/cptpp/comprehensive-and-progressive-agreement-for-trans-pacific-partnership",c:"#1E3A5F"},
+    {flag:"AU",label:"Apec Cross-Border Privacy Rules (Cbpr)",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.ag.gov.au/rights-and-protections/privacy/asia-pacific-economic-cooperation-and-privacy",c:"#1E3A5F"},
+    {flag:"AU",label:"Indonesia - Australia Comprehensive Economic Partnership Agreement",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.dfat.gov.au/trade/agreements/in-force/iacepa/indonesia-australia-comprehensive-economic-partnership-agreement",c:"#1E3A5F"},
+    {flag:"AU",label:"Australia-Hong Kong Free Trade Agreement And Associated Investment Agreement",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.dfat.gov.au/trade/agreements/in-force/a-hkfta/default",c:"#1E3A5F"},
+    {flag:"AU",label:"Australia-United Kingdom Free Trade Agreement",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.dfat.gov.au/trade/agreements/in-force/aukfta",c:"#1E3A5F"},
+    {flag:"AU",label:"Australia-United States Cloud Act Agreement",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.justice.gov/criminal/criminal-oia/cloud-act-agreement-between-governments-us-and-australia",c:"#1E3A5F"},
+    {flag:"AU",label:"Australia-Singapore Digital Economy Agreement",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.dfat.gov.au/trade/services-and-digital-trade/australia-and-singapore-digital-economy-agreement",c:"#1E3A5F"},
+    {flag:"AU",label:"Apec Cross-Border Privacy Rules (Cbpr)",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.apec.org/docs/default-source/Groups/ECSG/CBPR/CBPR-ProgramRequirements.pdf",c:"#1E3A5F"},
+    {flag:"AU",label:"2023-2030 Australian Cyber Security Strategy",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.homeaffairs.gov.au/about-us/our-portfolios/cyber-security/strategy/2023-2030-australian-cyber-security-strategy",c:"#1E3A5F"},
+    {flag:"AU",label:"Criminal Code Act 1995",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.legislation.gov.au/C2004A04868/latest/versions",c:"#1E3A5F"},
+    {flag:"AU",label:"Security Of Critical Infrastructure Act 2018",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.legislation.gov.au/C2018A00029/latest/versions",c:"#1E3A5F"},
+    {flag:"AU",label:"Telecommunications (Interception And Access) Act 1979",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.legislation.gov.au/C2004A02124/latest/text",c:"#1E3A5F"},
+    {flag:"AU",label:"Australian Security Intelligence Organisation Act 1979",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.legislation.gov.au/C2004A02123",c:"#1E3A5F"},
+    {flag:"AU",label:"Data Availability And Transparency Act 2022",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.legislation.gov.au/C2022A00011/latest/text",c:"#1E3A5F"},
+    {flag:"AU",label:"Surveillance Legislation Amendment (Identify And Disrupt) Act 2021",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.legislation.gov.au/Details/C2021A00098",c:"#1E3A5F"},
+    {flag:"AU",label:"Telecommunications Act 1997",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.legislation.gov.au/C2004A05145/",c:"#1E3A5F"},
+    {flag:"AU",label:"Telecommunications And Other Legislation Amendment (Assistance And Access) Act 2018",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.legislation.gov.au/Details/C2021C00496",c:"#1E3A5F"},
+    {flag:"AU",label:"Telecommunications Legislation Amendment (International Production Orders) Act 2021",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.legislation.gov.au/Details/C2021A00078",c:"#1E3A5F"},
+    {flag:"AU",label:"Telecommunications Regulations 2021",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.legislation.gov.au/Details/C2023C00106",c:"#1E3A5F"},
+    {flag:"AU",label:"Privacy Impact Assessment 2020",cat:"Australia",date:"2024-01-01",size:"1.0 MB",url:"https://www.oaic.gov.au/privacy/privacy-impact-assessments",c:"#1E3A5F"},
+    {flag:"MY",label:"Personal Data Protection Act (Act 709) 2010",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://mohre.um.edu.my/img/files/Personal%20Data%20Protection%20(PDPA)%20Act%202010.pdf",c:"#F59E0B"},
+    {flag:"MY",label:"Personal Data Protection Code Of Practice For Banking Sector And Financial Institutions 2017",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://www.pdp.gov.my/ppdpv1/en/akta/personal-data-protection-code-of-practice-for-banking-sector-and-financial-institutions/",c:"#F59E0B"},
+    {flag:"MY",label:"Personal Data Protection (Amendment) Act 2024",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://f.datasrvr.com/fr1/224/81715/DR_21_BI.pdf",c:"#F59E0B"},
+    {flag:"MY",label:"Income Tax Act (Act 53) 1967",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://www.hasil.gov.my/media/znonhmuj/20231101-income-tax-act-1967-act-53.pdf",c:"#F59E0B"},
+    {flag:"MY",label:"Personal Data Protection Code Of Practice For Licensees Under The Communications And Multimedia (Act 1998) Of 2017",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://www.pdp.gov.my/ppdpv1/en/akta/personal-data-protection-code-of-practice-for-the-communications-sector/",c:"#F59E0B"},
+    {flag:"MY",label:"Services Tax Act (Act 807) 2018",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://www.investmalaysia.gov.my/media/rsoj31eh/service-tax-act-2018.pdf",c:"#F59E0B"},
+    {flag:"MY",label:"Comprehensive And Progressive Agreement For Trans-Pacific Partnership - Malaysia",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://fta.miti.gov.my/index.php/pages/view/tpp_cptpp",c:"#F59E0B"},
+    {flag:"MY",label:"Regional Comprehensive Economic Partnership (Rcep)",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://fta.miti.gov.my/index.php/pages/view/rcep",c:"#F59E0B"},
+    {flag:"MY",label:"Personal Data Protection(Amendment) Bill (Act A1727) 2024",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://f.datasrvr.com/fr1/224/81715/DR_21_BI.pdf",c:"#F59E0B"},
+    {flag:"MY",label:"Computer Crimes Act (Act 563) 1997",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://ccid.rmp.gov.my/Laws/Computer_Crime_Act_1997.pdf",c:"#F59E0B"},
+    {flag:"MY",label:"Cyber Security Act (Act 854) 2024",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://lokekinggoh.com/layout2/wp-content/uploads/2024/06/Act-854.pdf",c:"#F59E0B"},
+    {flag:"MY",label:"Personal Data Protection Standard 2015",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://www.federalgazette.agc.gov.my",c:"#F59E0B"},
+    {flag:"MY",label:"Criminal Procedure Code (Act 593) 2018",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://cyrilla.org/api/files/1568727997327dm3cpb84eaw.pdf",c:"#F59E0B"},
+    {flag:"MY",label:"Security Offences (Special Measures) Act (Act 747) 2012",cat:"Malaysia",date:"2024-01-01",size:"1.0 MB",url:"https://cyrilla.org/api/files/1568729125117t97ha9lu92p.pdf",c:"#F59E0B"},
+    {flag:"SG",label:"Personal Data Protection Act 2012",cat:"Singapore",date:"2024-01-01",size:"1.0 MB",url:"https://sso.agc.gov.sg/Act/PDPA2012",c:"#10B981"},
+    {flag:"SG",label:"Regional Comprehensive Economic Partnership (Rcep)",cat:"Singapore",date:"2024-01-01",size:"1.0 MB",url:"https://www.mti.gov.sg/trade-international-economic-relations/agreements/free-trade-agreements-fta/rcep/",c:"#10B981"},
+    {flag:"SG",label:"Singapore-Australia Free Trade Agreement",cat:"Singapore",date:"2024-01-01",size:"1.0 MB",url:"https://www.enterprisesg.gov.sg/grow-your-business/go-global/international-agreements/free-trade-agreements/find-an-fta/safta",c:"#10B981"},
+    {flag:"SG",label:"Specific Terms And Conditions For Ip Telephony Services",cat:"Singapore",date:"2024-01-01",size:"1.0 MB",url:"https://www.imda.gov.sg/~/media/imda/files/inner/pcdg/consultations/20040921_propoiptelephony/tcsforiptelephony240605.pdf",c:"#10B981"},
+    {flag:"SG",label:"Telecommunications Act 1999",cat:"Singapore",date:"2024-01-01",size:"1.0 MB",url:"https://sso.agc.gov.sg/Act/TA1999#pr3-",c:"#10B981"},
   ];
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
@@ -2545,7 +2598,7 @@ function MemoryLayer() {
           <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Regulatory Memory Layer</h1>
         </div>
         <div className="flex gap-3 text-xs">
-          {[{l:"Total Documents",v:"2,847"},{l:"Memory Size",v:"142.7 GB"},{l:"Retrieval Speed",v:"84ms avg"}].map(s=>(
+          {[{l:"Total Documents",v:events.length.toString()},{l:"Memory Size",v:"142.7 GB"},{l:"Retrieval Speed",v:"84ms avg"}].map(s=>(
             <div key={s.l} className="text-center px-3 py-1.5 rounded-lg" style={{background:"rgba(30,58,95,0.08)",border:"1px solid rgba(30,58,95,0.18)"}}>
               <div className="font-bold" style={{color:"#475569",fontFamily:"JetBrains Mono, monospace"}}>{s.v}</div>
               <div style={{color:"#64748B"}}>{s.l}</div>
@@ -2557,6 +2610,7 @@ function MemoryLayer() {
         {events.map((e,i)=>(
           <motion.div key={i} initial={{opacity:0,x:-16}} animate={{opacity:1,x:0}} transition={{delay:i*0.05}}
             className="flex items-center gap-4 px-4 py-3 rounded-xl transition-all"
+            onClick={()=>window.open(e.url,"_blank")}
             style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.07)",cursor:"pointer"}}>
             <div className="flex items-center gap-2 w-8">
               <div className="w-2 h-2 rounded-full shrink-0" style={{background:e.c}}/>
@@ -2566,7 +2620,7 @@ function MemoryLayer() {
               <p className="text-sm font-medium truncate" style={{color:"#0F172A"}}>{e.label}</p>
               <p className="text-xs" style={{color:"#64748B"}}>{e.cat} · Ingested {e.date}</p>
             </div>
-            <span className="text-xs px-2 py-0.5 rounded shrink-0" style={{background:"#F1F5F9",color:"#64748B",fontFamily:"JetBrains Mono, monospace"}}>{e.size}</span>
+            <span className="text-xs px-2 py-0.5 rounded shrink-0" style={{background:"#F1F5F9",color:"#64748B",fontFamily:"JetBrains Mono, monospace"}}>{sizes[e.url] ?? "..."}</span>
             <ChevronRight size={14} style={{color:"#64748B"}}/>
           </motion.div>
         ))}
