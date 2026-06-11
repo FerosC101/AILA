@@ -9,7 +9,8 @@ import { scanAll, resolveSource, refreshHealth, activeUrlSet, healthReady, healt
 import { buildGraph } from "./graph.js";
 import { classifyInstrument, classifierEnabled } from "./classify.js";
 import { runSimulation, simulationOptions } from "./simulate.js";
-import { ragQuery, buildIndex, ragStatus } from "./rag.js";
+import { ragQuery, buildIndex, ragStatus, loadIndexFromDb } from "./rag.js";
+import { initDb, upsertSources } from "./db.js";
 
 // Minimal .env loader (no dependency) — reads server/.env into process.env.
 try {
@@ -312,9 +313,15 @@ app.get("/results", (_req, res) => res.json(results));
 /** GET /alerts */
 app.get("/alerts", (_req, res) => res.json(alerts));
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`AILA backend listening on http://localhost:${PORT}`);
   console.log(`Loaded ${loadPolicies().length} policy rows → ${loadSources().length} unique crawl targets.`);
+
+  // ── initialize DB ──
+  await initDb();
+  await upsertSources(loadSources());
+  console.log("Database ready");
+  await loadIndexFromDb();
   console.log(`AI classifier: ${classifierEnabled() ? `enabled (${process.env.GEMINI_MODEL || "gemini-2.5-flash"})` : "disabled (set GEMINI_API_KEY)"}.`);
   // Warm the active-URL health cache, then build the RAG index — both in the
   // background so /graph and /rag/query are fast once a user arrives.

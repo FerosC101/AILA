@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import type { RegulationSource, ScrapeResult } from "./types.js";
+import { insertScrape, getLatestScrape } from "./db.js";
 
 // Government sites front their content with WAFs that reject non-browser UAs,
 // so we present a current Chrome fingerprint. Adjust if you need an identifiable
@@ -104,9 +105,15 @@ export async function scrapeSource(source: RegulationSource): Promise<ScrapeResu
     status: 0,
     fetchedAt: new Date().toISOString(),
   };
+  const last = await getLatestScrape(source.id);
+  if (last?.ok) {
+    const ageMs = Date.now() - new Date(last.fetchedAt).getTime();
+    if (ageMs < 6 * 60 * 60 * 1000) return last;
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  
 
   try {
     const res = await fetch(source.url, {
@@ -170,9 +177,10 @@ export async function scrapeSource(source: RegulationSource): Promise<ScrapeResu
     return base;
   } finally {
     clearTimeout(timer);
+    // persist every crawl result to DB (success or failure)
+    await insertScrape(base).catch(() => {});
   }
 }
-
 /** Scrape many sources with bounded concurrency to stay polite. */
 export async function scrapeAll(
   sources: RegulationSource[],

@@ -6,6 +6,8 @@ import * as cheerio from "cheerio";
 import { fetchText, fetchPdfText } from "./scraper.js";
 import { loadSources } from "./sources.js";
 import { activeUrlSet, healthReady, refreshHealth } from "./scanner.js";
+import { saveChunks, loadAllChunks, getSourceEmbeddedAt } from "./db.js";
+
 
 const EMBED_MODEL = "gemini-embedding-001";
 const GEN_MODEL = () => process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -29,6 +31,23 @@ let builtAt = 0;
 
 export function ragStatus() {
   return { chunks: INDEX.length, building, builtAt, ready: INDEX.length > 0 && !building };
+}
+
+/** On server start: restore the index from DB so RAG works immediately. */
+export async function loadIndexFromDb(): Promise<void> {
+  const stored = await loadAllChunks();
+  if (!stored.length) return;
+  INDEX = stored.map((c, i) => ({
+    id: i,
+    sourceId: c.sourceId,
+    jurisdiction: c.jurisdiction,
+    instrument: c.instrument,
+    url: c.url,
+    text: c.text,
+    embedding: c.embedding,
+  }));
+  builtAt = Date.now();
+  console.log(`RAG index restored from DB: ${INDEX.length} chunks`);
 }
 
 function key(): string {
@@ -98,7 +117,21 @@ export async function buildIndex(): Promise<{ chunks: number; sources: number }>
   try {
     if (!healthReady()) await refreshHealth(loadSources());
     const active = activeUrlSet();
-    const sources = loadSources().filter((s) => active.has(s.url)).slice(0, MAX_SOURCES);
+    const allActive = loadSources().filter((s) => active.has(s.url)).slice(0, MAX_SOURCES);
+    // skip sources already embedded in the last 24 hours
+    const sources = (await Promise.all(
+      allActive.map(async s => {
+        const embeddedAt = await getSourceEmbeddedAt(s.id);
+        const ageMs = embeddedAt ? Date.now() - embeddedAt * 1000 : Infinity;
+        return ageMs < 24 * 60 * 60 * 1000 ? null : s;
+      })
+    )).filter(Boolean) as typeof allActive;
+
+    if (!sources.length) {
+      console.log("All sources already embedded — loading from DB");
+      await loadIndexFromDb();
+      return { chunks: INDEX.length, sources: 0 };
+    }
 
     // fetch page text with bounded concurrency
     const texts = new Array<string>(sources.length).fill("");
@@ -127,6 +160,24 @@ export async function buildIndex(): Promise<{ chunks: number; sources: number }>
     chunks.forEach((c, i) => { c.embedding = embeds[i] ?? []; });
     INDEX = chunks.filter((c) => c.embedding.length);
     builtAt = Date.now();
+
+    // persist chunks to DB grouped by source
+    const bySource = new Map<string, typeof INDEX>();
+    for (const c of INDEX) {
+      if (!bySource.has(c.sourceId)) bySource.set(c.sourceId, []);
+      bySource.get(c.sourceId)!.push(c);
+    }
+    for (const [sourceId, sourceChunks] of bySource) {
+      await saveChunks(sourceId, sourceChunks.map(c => ({
+        text: c.text,
+        embedding: c.embedding,
+        jurisdiction: c.jurisdiction,
+        instrument: c.instrument,
+        url: c.url,
+      })));
+    }
+    console.log(`RAG index saved to DB: ${INDEX.length} chunks`);
+
     return { chunks: INDEX.length, sources: sources.length };
   } finally {
     building = false;
