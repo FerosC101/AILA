@@ -265,8 +265,22 @@ export async function saveChunks(
   await db.batch(stmts, "write");
 }
 
-/** Load ALL chunks — used to restore the in-memory RAG index on startup. */
-export async function loadAllChunks(): Promise<StoredChunk[]> {
+/**
+ * Load chunks for the RAG index.
+ *
+ * FIX 2: Added optional `limit` parameter. When provided, returns only the
+ * most recently embedded rows (ORDER BY built_at DESC) so the in-memory index
+ * stays bounded as the corpus grows. Without a limit, behaviour is unchanged
+ * (used internally for full exports/audits only — not for startup restore).
+ */
+export async function loadAllChunks(limit?: number): Promise<StoredChunk[]> {
+  if (limit) {
+    const res = await db.execute({
+      sql: "SELECT * FROM chunks ORDER BY built_at DESC, source_id, chunk_index LIMIT ?",
+      args: [limit],
+    });
+    return res.rows.map(hydrateChunk);
+  }
   const res = await db.execute("SELECT * FROM chunks ORDER BY source_id, chunk_index");
   return res.rows.map(hydrateChunk);
 }

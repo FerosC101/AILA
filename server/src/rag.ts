@@ -11,9 +11,13 @@ import { saveChunks, loadAllChunks, getSourceEmbeddedAt } from "./db.js";
 
 const EMBED_MODEL = "gemini-embedding-001";
 const GEN_MODEL = () => process.env.GEMINI_MODEL || "gemini-2.5-flash";
-const MAX_SOURCES = 30;     // bound startup cost
-const PAGE_CHARS = 4000;    // text pulled per source
+const MAX_SOURCES = 30;       // bound startup cost
+const PAGE_CHARS = 4000;      // text pulled per source
 const CHUNK = 900, OVERLAP = 120;
+// FIX 2: hard cap on how many chunks live in RAM at once.
+// loadAllChunks() was an unbounded SELECT * that silently grew with the corpus.
+// At ~12KB per chunk (3072 floats × 4 bytes) this cap keeps the index under ~24MB.
+const MAX_INDEX_CHUNKS = 2_000;
 
 interface Chunk {
   id: number;
@@ -33,9 +37,15 @@ export function ragStatus() {
   return { chunks: INDEX.length, building, builtAt, ready: INDEX.length > 0 && !building };
 }
 
-/** On server start: restore the index from DB so RAG works immediately. */
+/**
+ * On server start: restore the index from DB so RAG works immediately.
+ *
+ * FIX 2: Previously called loadAllChunks() with no limit — a SELECT * that dumps
+ * the entire chunks table into RAM. As the corpus grows this silently OOMs the server.
+ * Now bounded to MAX_INDEX_CHUNKS most-recent rows; older chunks stay in SQLite.
+ */
 export async function loadIndexFromDb(): Promise<void> {
-  const stored = await loadAllChunks();
+  const stored = await loadAllChunks(MAX_INDEX_CHUNKS);
   if (!stored.length) return;
   INDEX = stored.map((c, i) => ({
     id: i,
@@ -47,7 +57,7 @@ export async function loadIndexFromDb(): Promise<void> {
     embedding: c.embedding,
   }));
   builtAt = Date.now();
-  console.log(`RAG index restored from DB: ${INDEX.length} chunks`);
+  console.log(`RAG index restored from DB: ${INDEX.length} chunks (cap: ${MAX_INDEX_CHUNKS})`);
 }
 
 function key(): string {
@@ -71,15 +81,34 @@ async function embedOne(text: string): Promise<number[]> {
   return (data?.embedding?.values as number[]) ?? [];
 }
 
-async function embedBatch(texts: string[], concurrency = 8): Promise<number[][]> {
+async function embedBatch(texts: string[], concurrency = 3): Promise<number[][]> {
   const out = new Array<number[]>(texts.length).fill([]);
   let cursor = 0;
+
   const worker = async () => {
     while (cursor < texts.length) {
       const i = cursor++;
-      out[i] = await embedOne(texts[i]);
+      try {
+        out[i] = await embedOne(texts[i]);
+      } catch (err: any) {
+        // 429 rate limit — wait 10 seconds and retry once
+        if (err?.message?.includes("429")) {
+          console.log(`[RAG] Rate limited — waiting 10s before retry...`);
+          await new Promise(r => setTimeout(r, 10_000));
+          try {
+            out[i] = await embedOne(texts[i]);
+          } catch {
+            out[i] = [];
+          }
+        } else {
+          out[i] = [];
+        }
+      }
+      // small delay between each request to stay under rate limit
+      await new Promise(r => setTimeout(r, 500));
     }
   };
+
   await Promise.all(Array.from({ length: Math.min(concurrency, texts.length) }, worker));
   return out;
 }
@@ -117,7 +146,15 @@ export async function buildIndex(): Promise<{ chunks: number; sources: number }>
   try {
     if (!healthReady()) await refreshHealth(loadSources());
     const active = activeUrlSet();
-    const allActive = loadSources().filter((s) => active.has(s.url)).slice(0, MAX_SOURCES);
+    const priority = ["Singapore", "Malaysia", "Philippines", "Thailand", "Indonesia", "Vietnam", "Australia"];
+    const allActive = loadSources()
+      .filter((s) => active.has(s.url))
+      .sort((a, b) => {
+        const ai = priority.indexOf(a.jurisdiction);
+        const bi = priority.indexOf(b.jurisdiction);
+        return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+      })
+      .slice(0, MAX_SOURCES);
     // skip sources already embedded in the last 24 hours
     const sources = (await Promise.all(
       allActive.map(async s => {
