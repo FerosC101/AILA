@@ -1,6 +1,8 @@
 import * as cheerio from "cheerio";
 import type { RegulationSource, ScrapeResult } from "./types.js";
 import { insertScrape, getLatestScrape } from "./db.js";
+import { ocrPdf, likelyScanned } from "./ocr.js";
+
 
 // Government sites front their content with WAFs that reject non-browser UAs,
 // so we present a current Chrome fingerprint. Adjust if you need an identifiable
@@ -134,7 +136,23 @@ export async function scrapeSource(source: RegulationSource): Promise<ScrapeResu
       base.ok = true;
       base.title = source.instrument;
       const text = await fetchPdfText(source.url).catch(() => null);
-      base.excerpt = text ? text.slice(0, MAX_EXCERPT) : "PDF reached but no extractable text (likely scanned — needs OCR).";
+      if (text && text.length >= 120) {
+        base.excerpt = text.slice(0, MAX_EXCERPT);
+      } else {
+        const buf = await fetch(source.url, { headers: BROWSER_HEADERS })
+          .then(r => r.arrayBuffer())
+          .then(b => new Uint8Array(b))
+          .catch(() => null);
+        if (buf && likelyScanned(source.url, text)) {
+          // run OCR async — don't block the scraper
+          ocrPdf(buf, source.id).then(ocrText => {
+            if (ocrText) console.log(`[OCR] Done for ${source.url}`);
+          }).catch(() => {});
+          base.excerpt = "Scanned PDF — OCR running in background.";
+        } else {
+          base.excerpt = text ?? "No extractable text found.";
+        }
+      }
       return base;
     }
 

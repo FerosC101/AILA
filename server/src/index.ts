@@ -10,7 +10,8 @@ import { buildGraph } from "./graph.js";
 import { classifyInstrument, classifierEnabled } from "./classify.js";
 import { runSimulation, simulationOptions } from "./simulate.js";
 import { ragQuery, buildIndex, ragStatus, loadIndexFromDb } from "./rag.js";
-import { initDb, upsertSources } from "./db.js";
+import { initDb, upsertSources, dbStats } from "./db.js";
+import { ocrStatus } from "./ocr.js";
 
 // Minimal .env loader (no dependency) — reads server/.env into process.env.
 try {
@@ -44,8 +45,14 @@ const results: unknown[] = [];
 const alerts: unknown[] = [];
 
 // --- health ------------------------------------------------------------------
-app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "aila-backend", time: new Date().toISOString() });
+app.get("/health", async (_req, res) => {
+  const stats = await dbStats();
+  res.json({ 
+    service: "aila-backend",
+    time: new Date().toISOString(),
+    ...stats,
+    ocr: ocrStatus() 
+  });
 });
 
 // =============================================================================
