@@ -12,6 +12,8 @@ import { runSimulation, simulationOptions } from "./simulate.js";
 import { ragQuery, buildIndex, ragStatus, loadIndexFromDb } from "./rag.js";
 import { initDb, upsertSources, dbStats } from "./db.js";
 import { ocrStatus } from "./ocr.js";
+import { translateStatus } from "./translate.js";
+
 
 // Minimal .env loader (no dependency) — reads server/.env into process.env.
 try {
@@ -51,7 +53,8 @@ app.get("/health", async (_req, res) => {
     service: "aila-backend",
     time: new Date().toISOString(),
     ...stats,
-    ocr: ocrStatus() 
+    ocr: ocrStatus(), 
+    translation: translateStatus(),
   });
 });
 

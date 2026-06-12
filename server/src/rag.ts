@@ -7,6 +7,8 @@ import { fetchText, fetchPdfText } from "./scraper.js";
 import { loadSources } from "./sources.js";
 import { activeUrlSet, healthReady, refreshHealth } from "./scanner.js";
 import { saveChunks, loadAllChunks, getSourceEmbeddedAt } from "./db.js";
+import { ensureEnglish } from "./translate.js";
+
 
 
 const EMBED_MODEL = "gemini-embedding-001";
@@ -136,7 +138,8 @@ async function pageText(url: string, format: string): Promise<string> {
   const $ = cheerio.load(html);
   $("script, style, noscript, svg, header, footer, nav, form").remove();
   const root = $("main").length ? $("main") : $("body");
-  return root.text().replace(/\s+/g, " ").trim().slice(0, PAGE_CHARS);
+  const text = root.text().replace(/\s+/g, " ").trim().slice(0, PAGE_CHARS);
+  return text;
 }
 
 // ---- index build -------------------------------------------------------------
@@ -176,7 +179,8 @@ export async function buildIndex(): Promise<{ chunks: number; sources: number }>
     const worker = async () => {
       while (cursor < sources.length) {
         const idx = cursor++;
-        texts[idx] = await pageText(sources[idx].url, sources[idx].format).catch(() => "");
+        const raw = await pageText(sources[idx].url, sources[idx].format).catch(() => "");
+        texts[idx] = await ensureEnglish(raw, sources[idx].id, sources[idx].jurisdiction).catch(() => raw);
       }
     };
     await Promise.all(Array.from({ length: 6 }, worker));
