@@ -1,0 +1,17 @@
+[
+  { "question": "What are Singapore's cross-border data transfer rules?", "expect": { "jurisdiction": "Singapore" } },
+  { "question": "Does Singapore have a Personal Data Protection Act?", "expect": { "urlIncludes": "pdpc.gov.sg" } },
+  { "question": "What are Singapore's Digital Economy Agreements?", "expect": { "urlIncludes": "mti.gov.sg" } },
+  { "question": "What does Malaysia's Personal Data Protection Act 2010 require?", "expect": { "jurisdiction": "Malaysia" } },
+  { "question": "How does Malaysia regulate cybersecurity?", "expect": { "jurisdiction": "Malaysia" } },
+  { "question": "What is Australia's Privacy Act 1988?", "expect": { "jurisdiction": "Australia" } },
+  { "question": "What does Australia's My Health Records Act say about data?", "expect": { "jurisdiction": "Australia" } },
+  { "question": "What are the cross-border data flow commitments in the CPTPP?", "expect": { "instrumentIncludes": "Trans-Pacific" } },
+  { "question": "What is the WTO doing on e-commerce?", "expect": { "urlIncludes": "wto.org" } },
+  { "question": "How does the EU Digital Services Act regulate platforms?", "expect": { "urlIncludes": "europa.eu" } },
+  { "question": "What does the USMCA digital trade chapter cover?", "expect": { "urlIncludes": "ustr.gov" } },
+  { "question": "Which framework tracks data protection legislation worldwide?", "expect": { "urlIncludes": "unctad.org" } },
+  { "question": "What are Australia's telecommunications data retention obligations?", "expect": { "jurisdiction": "Australia" } },
+  { "question": "What is Malaysia's Cyber Security Act 2024?", "expect": { "jurisdiction": "Malaysia" } },
+  { "question": "What are the data protection rules for the banking sector in Malaysia?", "expect": { "jurisdiction": "Malaysia" } }
+]

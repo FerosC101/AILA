@@ -195,6 +195,25 @@ export async function ocrPdf(
   });
 }
 
+/** OCR an image buffer (png/jpg/tiff) directly — for uploaded image documents. */
+export async function ocrImage(imageBuffer: Uint8Array, id: string, maxChars = 12_000): Promise<string | null> {
+  return new Promise((resolve) => {
+    ocrQueue.add(async () => {
+      try {
+        const worker = await getWorker();
+        const { data } = await worker.recognize(Buffer.from(imageBuffer));
+        const text = data.text.replace(/\s+/g, " ").trim();
+        console.log(`[OCR] Image ${id}: ${text.length} chars`);
+        resolve(text.length > 10 ? text.slice(0, maxChars) : null);
+      } catch (err) {
+        console.error(`[OCR] Image OCR failed for ${id}:`, err instanceof Error ? err.message : err);
+        _workerReady = false; _worker = null;
+        resolve(null);
+      }
+    });
+  });
+}
+
 export function likelyScanned(url: string, extractedText: string | null): boolean {
   if (!isTextTooShort(extractedText)) return false;
   const scannedPatterns = [

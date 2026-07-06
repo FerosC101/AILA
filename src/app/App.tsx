@@ -1154,6 +1154,7 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
 
 // ==================== INTELLIGENCE DRAWER ====================
 type AIClass = { rdtii?:Array<{code:string;name:string}>; pillars:string[]; policyFocus:string[]; coverage:string; rationale:string; model:string };
+type Clause = { type:string; text:string; actor?:string; rdtii?:string[]; penalty?:string; effectiveDate?:string; citation?:string; sourceQuote?:string; confidence?:number };
 function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>void;side?:"right"|"left"}) {
   const details=node.details;
   const isC=node.type==="country";
@@ -1163,6 +1164,15 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
   const [aiState,setAiState]=useState<"idle"|"loading"|"done"|"error">("idle");
   const [ai,setAi]=useState<AIClass|null>(null);
   const [aiErr,setAiErr]=useState("");
+  const [clState,setClState]=useState<"idle"|"loading"|"done"|"error">("idle");
+  const [clauses,setClauses]=useState<Clause[]>([]);
+  const [clErr,setClErr]=useState("");
+  const [dfState,setDfState]=useState<"idle"|"loading"|"done"|"error">("idle");
+  const [diff,setDiff]=useState<any>(null);
+  const [dfErr,setDfErr]=useState("");
+  const [engState,setEngState]=useState<"idle"|"loading"|"done"|"error">("idle");
+  const [eng,setEng]=useState<any>(null);
+  const [engErr,setEngErr]=useState("");
 
   const reclassify=async()=>{
     const base=(import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
@@ -1174,6 +1184,45 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
       if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||`HTTP ${r.status}`); }
       setAi(await r.json()); setAiState("done");
     }catch(err){ setAiErr(err instanceof Error?err.message:String(err)); setAiState("error"); }
+  };
+
+  const extractClauses=async()=>{
+    const base=(import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
+    if(!base||!node.url){ setClState("error"); setClErr("Backend not configured"); return; }
+    setClState("loading"); setClErr("");
+    try{
+      const r=await fetch(`${base}/extract`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:node.url})});
+      if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||`HTTP ${r.status}`); }
+      const d=await r.json(); setClauses(d.clauses||[]); setClState("done");
+    }catch(err){ setClErr(err instanceof Error?err.message:String(err)); setClState("error"); }
+  };
+
+  const checkDiff=async()=>{
+    const base=(import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
+    if(!base||!node.url){ setDfState("error"); setDfErr("Backend not configured"); return; }
+    setDfState("loading"); setDfErr("");
+    try{
+      const r=await fetch(`${base}/diff`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:node.url})});
+      if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||`HTTP ${r.status}`); }
+      setDiff(await r.json()); setDfState("done");
+    }catch(err){ setDfErr(err instanceof Error?err.message:String(err)); setDfState("error"); }
+  };
+
+  const runEngine=async()=>{
+    const base=(import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
+    if(!base||!node.url){ setEngState("error"); setEngErr("Backend not configured"); return; }
+    setEngState("loading"); setEngErr("");
+    try{
+      const r=await fetch(`${base}/engine/analyze`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:node.url})});
+      if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||`HTTP ${r.status}`); }
+      const out=await r.json(); setEng(out); setEngState("done");
+    }catch(err){ setEngErr(err instanceof Error?err.message:String(err)); setEngState("error"); }
+  };
+  const downloadEngine=()=>{
+    if(!eng) return;
+    const blob=new Blob([JSON.stringify(eng,null,2)],{type:"application/json"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+    a.download=`aila-output-${eng.document.id}.json`; a.click(); URL.revokeObjectURL(a.href);
   };
 
   if (!details) return null;
@@ -1263,6 +1312,131 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
                 </div>
                 {ai.rationale&&<p className="text-xs italic leading-relaxed" style={{color:"#64748B"}}>{ai.rationale}</p>}
                 <p className="text-xs" style={{color:"#CBD5E1"}}>via {ai.model}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {node.type==="regulation"&&node.url&&(
+          <div className="rounded-lg overflow-hidden" style={{border:"1px solid #E5E9F0"}}>
+            <button onClick={extractClauses} disabled={clState==="loading"}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold transition-colors"
+              style={{background:clState==="loading"?"#F1F5F9":"#fff",color:clState==="loading"?"#64748B":NAVY,cursor:clState==="loading"?"default":"pointer"}}>
+              <FileText size={13}/>
+              {clState==="loading"?"Extracting clauses…":clState==="done"?"Re-extract clauses":"Extract clauses"}
+            </button>
+            {clState==="error"&&(
+              <div className="px-3 py-2 text-xs" style={{color:"#B91C1C",background:"#FEF2F2"}}>{clErr}</div>
+            )}
+            {clState==="done"&&(
+              <div className="px-3 py-3" style={{background:"#F8FAFC"}}>
+                {clauses.length===0?(
+                  <p className="text-xs" style={{color:"#94A3B8"}}>No extractable clauses (page may be JS-rendered or scanned).</p>
+                ):(
+                  <div className="space-y-2.5">
+                    <div className="text-xs font-semibold uppercase tracking-widest" style={{color:"#94A3B8",fontFamily:"IBM Plex Sans, sans-serif"}}>{clauses.length} clauses extracted</div>
+                    {clauses.map((c,i)=>{
+                      const tc:Record<string,string>={obligation:"#1E3A5F",restriction:"#B91C1C",exception:"#B45309",penalty:"#7C2D12",right:"#047857",definition:"#475569"};
+                      const col=tc[c.type]||"#475569";
+                      return (
+                        <div key={i} className="rounded-lg p-2.5" style={{background:"#fff",border:"1px solid #E5E9F0"}}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{color:col,background:h2r(col,0.1)}}>{c.type}</span>
+                            {c.citation&&<span className="text-xs" style={{color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{c.citation}</span>}
+                            {c.actor&&<span className="text-xs ml-auto" style={{color:"#94A3B8"}}>{c.actor}</span>}
+                          </div>
+                          <p className="text-xs leading-relaxed mb-1.5" style={{color:"#1E293B"}}>{c.text}</p>
+                          {c.sourceQuote&&(
+                            <p className="text-xs leading-snug pl-2" style={{color:"#64748B",fontFamily:"Georgia, serif",fontStyle:"italic",borderLeft:"2px solid #E5E9F0"}}>&ldquo;{c.sourceQuote}&rdquo;</p>
+                          )}
+                          {(c.rdtii&&c.rdtii.length||c.penalty)&&(
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                              {(c.rdtii||[]).map(t=>(<span key={t} className="text-xs px-1.5 py-0.5 rounded-full" style={{background:h2r(NAVY,0.07),color:NAVY}}>{t}</span>))}
+                              {c.penalty&&<span className="text-xs px-1.5 py-0.5 rounded-full" style={{background:"rgba(185,28,28,0.08)",color:"#B91C1C"}}>⚠ {c.penalty}</span>}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {node.type==="regulation"&&node.url&&(
+          <div className="rounded-lg overflow-hidden" style={{border:"1px solid #E5E9F0"}}>
+            <button onClick={checkDiff} disabled={dfState==="loading"}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold transition-colors"
+              style={{background:dfState==="loading"?"#F1F5F9":"#fff",color:dfState==="loading"?"#64748B":NAVY,cursor:dfState==="loading"?"default":"pointer"}}>
+              <GitBranch size={13}/>
+              {dfState==="loading"?"Checking versions…":dfState==="done"?"Re-check amendments":"Check amendments (semantic diff)"}
+            </button>
+            {dfState==="error"&&<div className="px-3 py-2 text-xs" style={{color:"#B91C1C",background:"#FEF2F2"}}>{dfErr}</div>}
+            {dfState==="done"&&diff&&(
+              <div className="px-3 py-3" style={{background:"#F8FAFC"}}>
+                {diff.versions<2?(
+                  <p className="text-xs" style={{color:"#64748B"}}>{diff.note||`${diff.versions||0} version(s) captured — a diff appears once the regulation changes between crawls.`}</p>
+                ):(
+                  <>
+                    <div className="flex items-center gap-3 mb-2 text-xs">
+                      <span style={{color:"#047857"}}>+{diff.summary.added} added</span>
+                      <span style={{color:"#B91C1C"}}>−{diff.summary.removed} removed</span>
+                      <span style={{color:"#B45309"}}>~{diff.summary.modified} modified</span>
+                      {diff.summary.high>0&&<span className="ml-auto px-1.5 py-0.5 rounded" style={{background:"rgba(185,28,28,0.1)",color:"#B91C1C",fontWeight:700}}>{diff.summary.high} high-severity</span>}
+                    </div>
+                    <div className="space-y-1.5">
+                      {diff.changes.slice(0,8).map((ch:any,i:number)=>{
+                        const kc:Record<string,string>={added:"#047857",removed:"#B91C1C",modified:"#B45309"};
+                        const sc:Record<string,string>={high:"#B91C1C",medium:"#B45309",low:"#94A3B8"};
+                        return (
+                          <div key={i} className="text-xs" style={{borderLeft:`2px solid ${kc[ch.kind]}`,paddingLeft:"8px"}}>
+                            <div className="flex items-center gap-1.5">
+                              <span style={{color:kc[ch.kind],fontWeight:700,textTransform:"uppercase",fontSize:"10px"}}>{ch.kind}</span>
+                              <span style={{color:sc[ch.severity],fontSize:"10px"}}>{ch.severity}</span>
+                            </div>
+                            <p style={{color:"#334155",marginTop:"1px"}}>{ch.text}</p>
+                            {ch.from&&<p style={{color:"#94A3B8",fontStyle:"italic"}}>was: {ch.from}</p>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {node.type==="regulation"&&node.url&&(
+          <div className="rounded-lg overflow-hidden" style={{border:`1px solid ${h2r(NAVY,0.35)}`}}>
+            <button onClick={runEngine} disabled={engState==="loading"}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-bold transition-colors"
+              style={{background:engState==="loading"?"#F1F5F9":NAVY,color:engState==="loading"?"#64748B":"#fff",cursor:engState==="loading"?"default":"pointer"}}>
+              <Radio size={13}/>
+              {engState==="loading"?"Running engine (discovery → extraction → mapping)…":engState==="done"?"Re-run full engine":"Run full engine → Output Sample"}
+            </button>
+            {engState==="error"&&<div className="px-3 py-2 text-xs" style={{color:"#B91C1C",background:"#FEF2F2"}}>{engErr}</div>}
+            {engState==="done"&&eng&&(
+              <div className="px-3 py-3 space-y-2" style={{background:"#F8FAFC"}}>
+                <div className="grid grid-cols-3 gap-1.5 text-center">
+                  {[["discovery",`${eng.pipeline.discovery.ms}ms`],["extraction",`${eng.pipeline.extraction.clauseCount} clauses`],["mapping",`${eng.pipeline.mapping.rdtii.length} indicators`]].map(([l,v]:any)=>(
+                    <div key={l} className="rounded-md py-1.5" style={{background:"#fff",border:"1px solid #E5E9F0"}}>
+                      <div className="text-xs font-bold" style={{color:NAVY,fontFamily:"JetBrains Mono, monospace"}}>{v}</div>
+                      <div className="text-xs" style={{color:"#94A3B8"}}>{l}</div>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-widest mb-1" style={{color:"#94A3B8",fontFamily:"IBM Plex Sans, sans-serif"}}>Discovery tags</div>
+                  <div className="flex flex-wrap gap-1">
+                    {eng.document.discoveryTags.slice(0,8).map((t:string)=>(<span key={t} className="text-xs px-1.5 py-0.5 rounded-full" style={{background:h2r(NAVY,0.07),color:NAVY}}>{t}</span>))}
+                  </div>
+                </div>
+                <button onClick={downloadEngine} className="w-full flex items-center justify-center gap-2 rounded-md py-2 text-xs font-semibold" style={{background:"#fff",border:`1px solid ${h2r(NAVY,0.3)}`,color:NAVY,cursor:"pointer"}}>
+                  <FileText size={12}/> Download Output Sample (JSON)
+                </button>
               </div>
             )}
           </div>
@@ -2007,7 +2181,8 @@ const CITED_PROVISIONS = [
 ];
 
 type RagCitation = { n:number; instrument:string; jurisdiction:string; url:string; score:number; snippet:string };
-type RagResult = { question:string; answer:string; confidence:number; grounded:boolean; citations:RagCitation[]; retrieved:number };
+type RagKeyPoint = { heading:string; detail:string; citations:number[] };
+type RagResult = { question:string; answer:string; summary?:string; verdict?:string; keyPoints?:RagKeyPoint[]; risks?:string[]; recommendations?:string[]; confidence:number; grounded:boolean; citations:RagCitation[]; retrieved:number };
 
 function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBack: () => void; onSimulate: () => void; result?: RagResult|null }) {
   const r = SME_RICH_RESPONSE;
@@ -2079,10 +2254,53 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
           <div>
             {result ? (
               <>
-                <p style={{fontSize:"18px",lineHeight:1.75,color:"#1E293B",margin:"0 0 28px",fontFamily:serif}}>{result.answer}</p>
+                {/* verdict */}
+                {result.verdict&&(
+                  <div style={{display:"inline-block",fontSize:"11px",fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",color:"#1E3A5F",background:"rgba(30,58,95,0.08)",border:"1px solid rgba(30,58,95,0.2)",borderRadius:"20px",padding:"5px 12px",marginBottom:"16px",fontFamily:"IBM Plex Sans, sans-serif"}}>{result.verdict}</div>
+                )}
+                {/* direct answer */}
+                <p style={{fontSize:"18px",lineHeight:1.75,color:"#1E293B",margin:"0 0 24px",fontFamily:serif}}>{result.summary||result.answer}</p>
                 {!result.grounded&&(
-                  <div style={{fontSize:"13px",color:"#92400E",background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.25)",borderRadius:"8px",padding:"10px 14px",marginBottom:"28px"}}>
+                  <div style={{fontSize:"13px",color:"#92400E",background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.25)",borderRadius:"8px",padding:"10px 14px",marginBottom:"24px"}}>
                     ⚠ Limited evidence in the corpus for this question — treat the answer as indicative and verify against the cited sources.
+                  </div>
+                )}
+                {/* key points */}
+                {result.keyPoints&&result.keyPoints.length>0&&(
+                  <div style={{marginBottom:"24px"}}>
+                    <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#0F172A",margin:"0 0 12px"}}>Key Points</h2>
+                    <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
+                      {result.keyPoints.map((kp,i)=>(
+                        <div key={i} style={{display:"flex",gap:"12px"}}>
+                          <span style={{flexShrink:0,width:"22px",height:"22px",borderRadius:"50%",background:"rgba(30,58,95,0.08)",color:"#1E3A5F",fontSize:"11px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"JetBrains Mono, monospace"}}>{i+1}</span>
+                          <div>
+                            <p style={{fontSize:"14px",fontWeight:700,color:"#0F172A",margin:"0 0 2px"}}>{kp.heading}{kp.citations&&kp.citations.length>0&&<span style={{fontSize:"11px",fontWeight:600,color:"#1E3A5F",marginLeft:"6px"}}>{kp.citations.map(n=>`[${n}]`).join("")}</span>}</p>
+                            {kp.detail&&<p style={{fontSize:"14px",lineHeight:1.65,color:"#475569",margin:0}}>{kp.detail}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* risks + recommendations */}
+                {((result.risks&&result.risks.length>0)||(result.recommendations&&result.recommendations.length>0))&&(
+                  <div style={{display:"grid",gridTemplateColumns:(result.risks?.length&&result.recommendations?.length)?"1fr 1fr":"1fr",gap:"14px",marginBottom:"28px"}}>
+                    {result.risks&&result.risks.length>0&&(
+                      <div style={{borderRadius:"10px",padding:"14px 16px",background:"rgba(185,28,28,0.05)",border:"1px solid rgba(185,28,28,0.18)"}}>
+                        <p style={{fontSize:"11px",fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:"#B91C1C",margin:"0 0 8px",fontFamily:"IBM Plex Sans, sans-serif"}}>Risks</p>
+                        <ul style={{margin:0,paddingLeft:"16px",display:"flex",flexDirection:"column",gap:"5px"}}>
+                          {result.risks.map((x,i)=>(<li key={i} style={{fontSize:"13px",lineHeight:1.55,color:"#7F1D1D"}}>{x}</li>))}
+                        </ul>
+                      </div>
+                    )}
+                    {result.recommendations&&result.recommendations.length>0&&(
+                      <div style={{borderRadius:"10px",padding:"14px 16px",background:"rgba(4,120,87,0.05)",border:"1px solid rgba(4,120,87,0.18)"}}>
+                        <p style={{fontSize:"11px",fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:"#047857",margin:"0 0 8px",fontFamily:"IBM Plex Sans, sans-serif"}}>Recommendations</p>
+                        <ul style={{margin:0,paddingLeft:"16px",display:"flex",flexDirection:"column",gap:"5px"}}>
+                          {result.recommendations.map((x,i)=>(<li key={i} style={{fontSize:"13px",lineHeight:1.55,color:"#065F46"}}>{x}</li>))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 )}
                 <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#0F172A",margin:"0 0 4px"}}>Evidence Viewer</h2>
@@ -2555,72 +2773,185 @@ function CountriesView() {
 }
 
 // ==================== MEMORY LAYER ====================
+const CLAUSE_TYPE_COLOR: Record<string,string> = {
+  obligation:"#1E3A5F", restriction:"#B91C1C", exception:"#B45309",
+  penalty:"#7C2D12", right:"#047857", definition:"#475569",
+};
+
 function MemoryLayer() {
   const API = (import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
-  const [events, setEvents] = React.useState<any[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string|null>(null);
+  const [health,setHealth]=React.useState<any>(null);
+  const [clauses,setClauses]=React.useState<any[]>([]);
+  const [loading,setLoading]=React.useState(true);
+  const [error,setError]=React.useState<string|null>(null);
+  const [jur,setJur]=React.useState("");
+  const [ctype,setCtype]=React.useState("");
+  const [batch,setBatch]=React.useState<any>(null);
+  const [upState,setUpState]=React.useState<"idle"|"loading"|"done"|"error">("idle");
+  const [upResult,setUpResult]=React.useState<any>(null);
+  const [upErr,setUpErr]=React.useState("");
+  const fileRef=React.useRef<HTMLInputElement>(null);
+
+  const loadClauses=React.useCallback(()=>{
+    if(!API) return;
+    const qs=new URLSearchParams();
+    if(jur) qs.set("jurisdiction",jur);
+    if(ctype) qs.set("type",ctype);
+    fetch(`${API}/clauses?${qs.toString()}`).then(r=>r.json()).then(d=>{setClauses(Array.isArray(d)?d:[]);setLoading(false);}).catch(()=>{setError("Failed to load clauses.");setLoading(false);});
+  },[API,jur,ctype]);
 
   React.useEffect(()=>{
     if(!API){ setError("Backend URL not configured."); setLoading(false); return; }
-    fetch(`${API}/sources`)
-      .then(r=>r.json())
-      .then(data=>{
-        const colorMap: Record<string,string> = {
-          "Australia":"#1E3A5F","Malaysia":"#F59E0B","Singapore":"#10B981",
-          "Thailand":"#EF4444","Vietnam":"#8B5CF6","Indonesia":"#F97316",
-          "Philippines":"#06B6D4",
-        };
-        const sources = (data.sources ?? []).map((s:any)=>({
-          flag: s.jurisdiction.slice(0,2).toUpperCase(),
-          label: s.instrument,
-          cat: s.jurisdiction,
-          date: new Date().toISOString().slice(0,10),
-          url: s.url,
-          c: colorMap[s.jurisdiction] ?? "#64748B",
-        }));
-        setEvents(sources);
-        setLoading(false);
-      })
-      .catch(()=>{ setError("Failed to load sources."); setLoading(false); });
-  },[]);
+    fetch(`${API}/health`).then(r=>r.json()).then(setHealth).catch(()=>{});
+    loadClauses();
+  },[API,loadClauses]);
+
+  // batch extraction progress polling
+  const runBatch=async()=>{
+    if(!API) return;
+    const r=await fetch(`${API}/extract/all`,{method:"POST"});
+    if(!r.ok){ const e=await r.json().catch(()=>({})); setBatch({error:e.error||`HTTP ${r.status}`}); return; }
+    const poll=async()=>{
+      const s=await fetch(`${API}/extract/status`).then(x=>x.json());
+      setBatch(s);
+      if(s.running) setTimeout(poll,3000); else { loadClauses(); fetch(`${API}/health`).then(x=>x.json()).then(setHealth); }
+    };
+    poll();
+  };
+
+  const onUpload=async(file:File)=>{
+    if(!API) return;
+    setUpState("loading"); setUpErr(""); setUpResult(null);
+    try{
+      const fd=new FormData(); fd.append("file",file);
+      const r=await fetch(`${API}/upload`,{method:"POST",body:fd});
+      if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||`HTTP ${r.status}`); }
+      const out=await r.json();
+      setUpResult(out); setUpState("done");
+      // uploaded doc's clauses now persisted — refresh archive + stats
+      loadClauses(); fetch(`${API}/health`).then(x=>x.json()).then(setHealth);
+    }catch(err){ setUpErr(err instanceof Error?err.message:String(err)); setUpState("error"); }
+  };
+
+  const jurisdictions=[...new Set(clauses.map(c=>c.jurisdiction))].sort();
+  const types=["obligation","restriction","exception","penalty","right","definition"];
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
           <Database size={18} style={{color:"#334155"}}/>
-          <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Regulatory Memory Layer</h1>
+          <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Document Archive</h1>
         </div>
-        <div className="flex gap-3 text-xs">
-          {[{l:"Total Documents",v:loading?"...":events.length.toString()},{l:"Memory Size",v:"N/A"},{l:"Retrieval Speed",v:"N/A"}].map(s=>(
+        <div className="flex gap-2 text-xs">
+          {[{l:"Sources",v:health?.sources},{l:"Text chunks",v:health?.chunks},{l:"Clauses",v:health?.clauses}].map(s=>(
             <div key={s.l} className="text-center px-3 py-1.5 rounded-lg" style={{background:"rgba(30,58,95,0.08)",border:"1px solid rgba(30,58,95,0.18)"}}>
-              <div className="font-bold" style={{color:"#475569",fontFamily:"JetBrains Mono, monospace"}}>{s.v}</div>
+              <div className="font-bold" style={{color:"#1E3A5F",fontFamily:"JetBrains Mono, monospace"}}>{s.v??"—"}</div>
               <div style={{color:"#64748B"}}>{s.l}</div>
             </div>
           ))}
         </div>
       </div>
+      <p className="text-sm mb-5" style={{color:"#64748B"}}>Structured regulatory atoms extracted from the live corpus — each with its type, citation, and verbatim source evidence.</p>
+
+      {/* ===== upload a document (OCR + engine) ===== */}
+      <input ref={fileRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.txt,image/*,application/pdf,text/plain" style={{display:"none"}}
+        onChange={e=>{ const f=e.target.files?.[0]; if(f) onUpload(f); e.target.value=""; }}/>
+      <div
+        onClick={()=>upState!=="loading"&&fileRef.current?.click()}
+        onDragOver={e=>{e.preventDefault();}}
+        onDrop={e=>{e.preventDefault(); const f=e.dataTransfer.files?.[0]; if(f&&upState!=="loading") onUpload(f);}}
+        className="rounded-xl mb-4 flex flex-col items-center justify-center text-center transition-colors"
+        style={{border:`1.5px dashed ${upState==="loading"?"#CBD5E1":h2r(NAVY,0.4)}`,background:upState==="loading"?"#F1F5F9":h2r(NAVY,0.02),padding:"22px",cursor:upState==="loading"?"default":"pointer"}}>
+        {upState==="loading"?(
+          <div className="flex items-center gap-2.5"><Radio size={16} style={{color:NAVY}}/><span className="text-sm" style={{color:"#475569"}}>Processing — OCR → extraction → mapping… (scanned files take longer)</span></div>
+        ):(
+          <><div className="flex items-center gap-2 mb-1"><FileText size={18} style={{color:NAVY}}/><span className="text-sm font-semibold" style={{color:"#0F172A"}}>Upload a legal document</span></div>
+          <p className="text-xs" style={{color:"#94A3B8"}}>Drag &amp; drop or click — PDF, scanned image (OCR), or text. Runs the full engine and adds it to the archive.</p></>
+        )}
+      </div>
+      {upState==="error"&&<p className="text-xs mb-3" style={{color:"#B91C1C"}}>{upErr}</p>}
+      {upState==="done"&&upResult&&(
+        <div className="rounded-xl mb-4 p-4" style={{background:"#fff",border:`1px solid ${h2r(NAVY,0.25)}`}}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-bold uppercase tracking-widest px-2 py-0.5 rounded" style={{background:h2r(NAVY,0.1),color:NAVY}}>Engine output</span>
+            <span className="text-sm font-semibold" style={{color:"#0F172A"}}>{upResult.document.instrument}</span>
+            <span className="text-xs" style={{color:"#94A3B8"}}>{upResult.document.sourceType} · {upResult.document.language} · {upResult.document.chars} chars</span>
+            <button onClick={()=>{const b=new Blob([JSON.stringify(upResult,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`aila-output-${upResult.document.id}.json`;a.click();URL.revokeObjectURL(a.href);}}
+              className="ml-auto text-xs font-semibold flex items-center gap-1" style={{color:NAVY,cursor:"pointer",background:"none",border:"none"}}><FileText size={12}/> Download JSON</button>
+          </div>
+          {upResult.note?(
+            <p className="text-xs" style={{color:"#B45309"}}>{upResult.note}</p>
+          ):(
+            <>
+              <div className="grid grid-cols-3 gap-2 mb-2">
+                {[["ingest",`${upResult.pipeline.ingest.ms}ms`],["clauses",upResult.pipeline.extraction.clauseCount],["indicators",upResult.pipeline.mapping.rdtii.length]].map(([l,v]:any)=>(
+                  <div key={l} className="rounded-md py-1.5 text-center" style={{background:"#F8FAFC",border:"1px solid #E5E9F0"}}>
+                    <div className="text-sm font-bold" style={{color:NAVY,fontFamily:"JetBrains Mono, monospace"}}>{v}</div>
+                    <div className="text-xs" style={{color:"#94A3B8"}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {upResult.document.discoveryTags.map((t:string)=>(<span key={t} className="text-xs px-1.5 py-0.5 rounded-full" style={{background:h2r(NAVY,0.07),color:NAVY}}>{t}</span>))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* controls */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <select value={jur} onChange={e=>setJur(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none" style={{border:"1px solid #E5E9F0",color:"#334155",background:"#fff"}}>
+          <option value="">All jurisdictions</option>
+          {jurisdictions.map(j=><option key={j} value={j}>{j}</option>)}
+        </select>
+        <select value={ctype} onChange={e=>setCtype(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none" style={{border:"1px solid #E5E9F0",color:"#334155",background:"#fff"}}>
+          <option value="">All types</option>
+          {types.map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+        <div className="flex-1"/>
+        <button onClick={runBatch} disabled={batch?.running}
+          className="flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-semibold"
+          style={{background:batch?.running?"#94A3B8":"#1E3A5F",color:"#fff",border:"none",cursor:batch?.running?"default":"pointer"}}>
+          <Brain size={14}/>{batch?.running?`Extracting ${batch.processed}/${batch.total}…`:"Extract clauses (all sources)"}
+        </button>
+      </div>
+      {batch?.error&&<p className="text-xs mb-3" style={{color:"#B91C1C"}}>{batch.error}</p>}
+      {batch&&!batch.running&&batch.processed>0&&<p className="text-xs mb-3" style={{color:"#047857"}}>✓ Extracted {batch.clauses} clauses from {batch.processed} sources.</p>}
+
+      {/* clause list */}
       <div className="space-y-2">
-        {loading && <p style={{color:"#64748B",textAlign:"center",padding:"2rem"}}>Loading sources...</p>}
-        {error && <p style={{color:"#EF4444",textAlign:"center",padding:"2rem"}}>{error}</p>}
-        {events.map((e,i)=>(
-          <motion.div key={i} initial={{opacity:0,x:-16}} animate={{opacity:1,x:0}} transition={{delay:i*0.05}}
-            className="flex items-center gap-4 px-4 py-3 rounded-xl transition-all"
-            onClick={()=>window.open(e.url,"_blank")}
-            style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.07)",cursor:"pointer"}}>
-            <div className="flex items-center gap-2 w-8">
-              <div className="w-2 h-2 rounded-full shrink-0" style={{background:e.c}}/>
+        {loading&&<p style={{color:"#64748B",textAlign:"center",padding:"2rem"}}>Loading…</p>}
+        {error&&<p style={{color:"#EF4444",textAlign:"center",padding:"2rem"}}>{error}</p>}
+        {!loading&&!error&&clauses.length===0&&(
+          <div className="rounded-xl p-8 text-center" style={{background:"#fff",border:"1px dashed #E5E9F0"}}>
+            <FileText size={24} style={{color:"#CBD5E1",margin:"0 auto 10px"}}/>
+            <p className="text-sm" style={{color:"#94A3B8"}}>No clauses extracted yet. Click &ldquo;Extract clauses (all sources)&rdquo; to populate the archive.</p>
+          </div>
+        )}
+        {clauses.map((c,i)=>{
+          const col=CLAUSE_TYPE_COLOR[c.type]||"#475569";
+          return (
+            <div key={i} className="rounded-xl px-4 py-3" style={{background:"#fff",border:"1px solid #E5E9F0"}}>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{color:col,background:h2r(col,0.1)}}>{c.type}</span>
+                <span className="text-sm font-semibold" style={{color:"#0F172A"}}>{c.instrument}</span>
+                <span className="text-xs" style={{color:"#94A3B8"}}>{c.jurisdiction}</span>
+                {c.citation&&<span className="text-xs" style={{color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{c.citation}</span>}
+                <a href={c.url} target="_blank" rel="noreferrer" className="ml-auto"><Link size={12} style={{color:"#94A3B8"}}/></a>
+              </div>
+              <p className="text-sm leading-relaxed mb-1" style={{color:"#1E293B"}}>{c.text}</p>
+              {c.sourceQuote&&<p className="text-xs leading-snug pl-2" style={{color:"#64748B",fontFamily:"Georgia, serif",fontStyle:"italic",borderLeft:"2px solid #E5E9F0"}}>&ldquo;{c.sourceQuote}&rdquo;</p>}
+              {((c.rdtii&&c.rdtii.length)||c.penalty)&&(
+                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  {(c.rdtii||[]).map((t:string)=>(<span key={t} className="text-xs px-1.5 py-0.5 rounded-full" style={{background:"rgba(30,58,95,0.07)",color:"#1E3A5F"}}>{t}</span>))}
+                  {c.penalty&&<span className="text-xs px-1.5 py-0.5 rounded-full" style={{background:"rgba(185,28,28,0.08)",color:"#B91C1C"}}>⚠ {c.penalty}</span>}
+                </div>
+              )}
             </div>
-            <span className="text-xl">{e.flag}</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate" style={{color:"#0F172A"}}>{e.label}</p>
-              <p className="text-xs" style={{color:"#64748B"}}>{e.cat} · Ingested {e.date}</p>
-            </div>
-            <span className="text-xs px-2 py-0.5 rounded shrink-0" style={{background:"#F1F5F9",color:"#64748B",fontFamily:"JetBrains Mono, monospace"}}>—</span>
-            <ChevronRight size={14} style={{color:"#64748B"}}/>
-          </motion.div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

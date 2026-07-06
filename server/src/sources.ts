@@ -173,3 +173,7 @@ export function loadSources(): RegulationSource[] {
 export function findSource(id: string): RegulationSource | undefined {
   return loadSources().find((s) => s.id === id);
 }
+
+export function findSourceByUrl(url: string): RegulationSource | undefined {
+  return loadSources().find((s) => s.url === url);
+}

@@ -3,15 +3,24 @@ import cors from "cors";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { loadSources, loadPolicies, findSource } from "./sources.js";
+import { loadSources, loadPolicies, findSource, findSourceByUrl } from "./sources.js";
 import { scrapeAll, scrapeSource } from "./scraper.js";
 import { scanAll, resolveSource, refreshHealth, activeUrlSet, healthReady, healthState } from "./scanner.js";
 import { buildGraph } from "./graph.js";
 import { classifyInstrument, classifierEnabled } from "./classify.js";
 import { runSimulation, simulationOptions } from "./simulate.js";
+import { diffSource, diffUrls } from "./diff.js";
+import { getVersionHistory } from "./db.js";
 import { ragQuery, buildIndex, ragStatus, loadIndexFromDb } from "./rag.js";
-import { initDb, upsertSources, dbStats } from "./db.js";
+import { initDb, upsertSources, dbStats, loadClauses } from "./db.js";
+import { extractSource, extractorEnabled, extractAll, batchStatus } from "./extract.js";
+import { analyzeDocument } from "./engine.js";
+import { processUpload } from "./upload.js";
+import multer from "multer";
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 import { ocrStatus } from "./ocr.js";
+import { renderStatus } from "./render.js";
 import { translateStatus } from "./translate.js";
 
 
@@ -53,8 +62,9 @@ app.get("/health", async (_req, res) => {
     service: "aila-backend",
     time: new Date().toISOString(),
     ...stats,
-    ocr: ocrStatus(), 
+    ocr: ocrStatus(),
     translation: translateStatus(),
+    render: renderStatus(),
   });
 });
 
@@ -148,6 +158,134 @@ app.post("/classify", async (req, res) => {
       context = scrape.excerpt || scrape.title;
     }
     res.json(await classifyInstrument({ instrument, excerpt: context, jurisdiction }));
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// =============================================================================
+// Clause-level extraction (regulatory atoms + evidence)
+// =============================================================================
+
+/** POST /extract/all — extract clauses across every active source (background job). */
+app.post("/extract/all", (_req, res) => {
+  if (!extractorEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  if (batchStatus().running) return res.status(409).json({ error: "Batch extraction already running.", status: batchStatus() });
+  void extractAll().catch((e) => console.error("[extract] batch error", e));
+  res.status(202).json({ started: true, status: batchStatus() });
+});
+
+/** GET /extract/status — batch extraction progress. */
+app.get("/extract/status", (_req, res) => res.json(batchStatus()));
+
+// =============================================================================
+// The Engine — one-document pipeline → machine-readable Output Sample
+//   discovery → extraction → mapping → categorization
+// =============================================================================
+
+/**
+ * POST /engine/analyze — run the full pipeline on one document.
+ * Body: { id } (source id) or { url }. Add ?download=1 to receive it as a file.
+ */
+app.post("/engine/analyze", async (req, res) => {
+  if (!extractorEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  const { id, url } = req.body ?? {};
+  if (!id && !url) return res.status(400).json({ error: "Provide { id } or { url }." });
+  try {
+    const out = await analyzeDocument(url || id, !!url);
+    if (req.query.download === "1") {
+      const fname = `aila-output-${out.document.id}.json`;
+      res.setHeader("Content-Disposition", `attachment; filename="${fname}"`);
+      res.setHeader("Content-Type", "application/json");
+      return res.send(JSON.stringify(out, null, 2));
+    }
+    res.json(out);
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** GET /engine/analyze/:id.json — same pipeline, downloadable machine-readable file. */
+app.get("/engine/analyze/:id", async (req, res) => {
+  if (!extractorEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  const id = req.params.id.replace(/\.json$/, "");
+  try {
+    const out = await analyzeDocument(id, false);
+    res.setHeader("Content-Type", "application/json");
+    if (req.query.download === "1") res.setHeader("Content-Disposition", `attachment; filename="aila-output-${id}.json"`);
+    res.send(JSON.stringify(out, null, 2));
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** POST /extract/:id — extract structured clauses for one source and persist them. */
+app.post("/extract/:id", async (req, res) => {
+  if (!extractorEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  try {
+    res.json(await extractSource(req.params.id));
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** POST /extract — extract by URL (used by the graph node drawer). Body: { url }. */
+app.post("/extract", async (req, res) => {
+  if (!extractorEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  const { url } = req.body ?? {};
+  const source = url ? findSourceByUrl(url) : undefined;
+  if (!source) return res.status(404).json({ error: "No source matches that URL." });
+  try {
+    res.json(await extractSource(source.id));
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** GET /clauses — query extracted clauses (?jurisdiction= ?type= ?sourceId=). */
+app.get("/clauses", async (req, res) => {
+  const q = (k: string) => req.query[k] as string | undefined;
+  res.json(await loadClauses({ jurisdiction: q("jurisdiction"), type: q("type"), sourceId: q("sourceId"), limit: 500 }));
+});
+
+// =============================================================================
+// Semantic version control & diff ("GitHub for regulations")
+// =============================================================================
+
+/** GET /versions/:id — version history (metadata) for a source. */
+app.get("/versions/:id", async (req, res) => {
+  const source = findSource(req.params.id);
+  if (!source) return res.status(404).json({ error: `Unknown source: ${req.params.id}` });
+  res.json({ sourceId: source.id, instrument: source.instrument, versions: await getVersionHistory(source.id) });
+});
+
+/** GET /diff/:id — semantic diff of the two most recent versions of a source. */
+app.get("/diff/:id", async (req, res) => {
+  const source = findSource(req.params.id);
+  if (!source) return res.status(404).json({ error: `Unknown source: ${req.params.id}` });
+  try {
+    res.json({ sourceId: source.id, instrument: source.instrument, ...(await diffSource(source.id)) });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** POST /diff — semantic diff. Accepts { url } (a source's own versions),
+ *  { urlA, urlB } (two live pages), or { textA, textB } (raw). */
+app.post("/diff", async (req, res) => {
+  const { url, urlA, urlB, textA, textB } = req.body ?? {};
+  try {
+    if (url) {
+      const source = findSourceByUrl(url);
+      if (!source) return res.status(404).json({ error: "No source matches that URL." });
+      return res.json({ sourceId: source.id, instrument: source.instrument, ...(await diffSource(source.id)) });
+    }
+    if (urlA && urlB) return res.json(await diffUrls(urlA, urlB));
+    if (typeof textA === "string" && typeof textB === "string") {
+      const { semanticDiff } = await import("./diff.js");
+      return res.json(await semanticDiff(textA, textB));
+    }
+    res.status(400).json({ error: "Provide { url }, { urlA, urlB }, or { textA, textB }." });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
@@ -285,24 +423,22 @@ app.post("/resolve", async (_req, res) => {
 // Frontend contract (mirrors README + src/services/*)
 // =============================================================================
 
-/** POST /upload */
-app.post("/upload", (req, res) => {
-  const { fileName, jurisdiction, documentType, sourceLabel, notes } = req.body ?? {};
-  if (!fileName || !jurisdiction || !documentType) {
-    return res.status(400).json({ error: "fileName, jurisdiction, documentType are required." });
+/**
+ * POST /upload — upload a legal document (PDF / image / text). Runs the engine:
+ * ingest (OCR for scanned/image) → translate → extract clauses → map (RDTII).
+ * multipart form field: "file"; optional "jurisdiction". Returns the Output Sample.
+ */
+app.post("/upload", upload.single("file"), async (req, res) => {
+  if (!extractorEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  const f = (req as any).file;
+  if (!f) return res.status(400).json({ error: "No file uploaded (form field 'file')." });
+  const jurisdiction = (req.body?.jurisdiction as string) || "Uploaded";
+  try {
+    const result = await processUpload(f.buffer, f.originalname, f.mimetype, jurisdiction);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
-  const record: UploadRecord = {
-    id: `upload-${Date.now()}`,
-    fileName,
-    jurisdiction,
-    documentType,
-    status: "uploaded",
-    uploadedAt: new Date().toISOString(),
-    sourceLabel,
-    notes,
-  };
-  uploads.push(record);
-  res.status(201).json(record);
 });
 
 /** GET /status — upload queue */

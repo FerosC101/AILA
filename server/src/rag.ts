@@ -4,9 +4,10 @@
 
 import * as cheerio from "cheerio";
 import { fetchText, fetchPdfText } from "./scraper.js";
+import { renderText, renderEnabled } from "./render.js";
 import { loadSources } from "./sources.js";
 import { activeUrlSet, healthReady, refreshHealth } from "./scanner.js";
-import { saveChunks, loadAllChunks, getSourceEmbeddedAt } from "./db.js";
+import { saveChunks, loadAllChunks, getSourceEmbeddedAt, loadClauseEmbeddings, type StoredClause } from "./db.js";
 import { ensureEnglish } from "./translate.js";
 
 
@@ -32,11 +33,22 @@ interface Chunk {
 }
 
 let INDEX: Chunk[] = [];
+let CLAUSE_INDEX: StoredClause[] = [];   // high-precision clause-level retrieval units
 let building = false;
 let builtAt = 0;
 
 export function ragStatus() {
-  return { chunks: INDEX.length, building, builtAt, ready: INDEX.length > 0 && !building };
+  return { chunks: INDEX.length, clauses: CLAUSE_INDEX.length, building, builtAt, ready: INDEX.length > 0 && !building };
+}
+
+/** Embed arbitrary texts (used by the clause extractor). */
+export async function embedTexts(texts: string[]): Promise<number[][]> {
+  return embedBatch(texts);
+}
+
+/** Load embedded clauses into memory as retrieval units. */
+export async function loadClauseIndex(): Promise<void> {
+  CLAUSE_INDEX = (await loadClauseEmbeddings()).filter((c) => c.embedding && c.embedding.length > 0);
 }
 
 /**
@@ -134,11 +146,18 @@ async function pageText(url: string, format: string): Promise<string> {
     return pdf ?? "";
   }
   const html = await fetchText(url, 12000);
-  if (!html) return "";
-  const $ = cheerio.load(html);
-  $("script, style, noscript, svg, header, footer, nav, form").remove();
-  const root = $("main").length ? $("main") : $("body");
-  const text = root.text().replace(/\s+/g, " ").trim().slice(0, PAGE_CHARS);
+  let text = "";
+  if (html) {
+    const $ = cheerio.load(html);
+    $("script, style, noscript, svg, header, footer, nav, form").remove();
+    const root = $("main").length ? $("main") : $("body");
+    text = root.text().replace(/\s+/g, " ").trim().slice(0, PAGE_CHARS);
+  }
+  // JS-rendered / WAF-shell pages return little text → try headless browser
+  if (text.length < 300 && renderEnabled()) {
+    const rendered = await renderText(url, 25000, PAGE_CHARS).catch(() => null);
+    if (rendered && rendered.length > text.length) text = rendered;
+  }
   return text;
 }
 
@@ -227,36 +246,65 @@ export async function buildIndex(): Promise<{ chunks: number; sources: number }>
 
 // ---- query -------------------------------------------------------------------
 export interface RagCitation { n: number; instrument: string; jurisdiction: string; url: string; score: number; snippet: string }
+export interface RagKeyPoint { heading: string; detail: string; citations: number[] }
 export interface RagResult {
   question: string;
-  answer: string;
+  answer: string;              // plain-text summary (back-compat + eval)
+  summary: string;             // direct answer, 2-3 sentences
+  verdict: string;             // short label e.g. "Permitted with conditions"
+  keyPoints: RagKeyPoint[];    // obligations / conditions, each cited
+  risks: string[];
+  recommendations: string[];
   confidence: number;          // 0..1, self-reflective (retrieval × model)
   grounded: boolean;
   citations: RagCitation[];
   retrieved: number;
 }
 
+interface RetrievedItem {
+  instrument: string; jurisdiction: string; url: string; text: string;
+  citation?: string; sourceQuote?: string; kind: "chunk" | "clause"; score: number;
+}
+
 export async function ragQuery(question: string, k = 6): Promise<RagResult> {
-  if (!INDEX.length) await buildIndex();
+  if (!INDEX.length) await loadIndexFromDb();   // prefer the persisted index
+  if (!INDEX.length) await buildIndex();         // only embed from scratch if DB is empty
+  if (!CLAUSE_INDEX.length) await loadClauseIndex(); // high-precision clause units
   const [qEmb] = await embedBatch([question]);
 
-  const ranked = INDEX
-    .map((c) => ({ c, score: cosine(qEmb, c.embedding) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, k);
+  const chunkItems: RetrievedItem[] = INDEX.map((c) => ({
+    instrument: c.instrument, jurisdiction: c.jurisdiction, url: c.url, text: c.text,
+    kind: "chunk", score: cosine(qEmb, c.embedding),
+  }));
+  // clauses are precise + already cited → small ranking boost
+  const clauseItems: RetrievedItem[] = CLAUSE_INDEX.map((c) => ({
+    instrument: c.instrument, jurisdiction: c.jurisdiction, url: c.url,
+    text: c.text, citation: c.citation, sourceQuote: c.sourceQuote,
+    kind: "clause", score: cosine(qEmb, c.embedding!) * 1.07,
+  }));
+
+  const ranked = [...chunkItems, ...clauseItems].sort((a, b) => b.score - a.score).slice(0, k);
 
   const topScore = ranked[0]?.score ?? 0;
   const context = ranked
-    .map((r, i) => `[${i + 1}] ${r.c.instrument} — ${r.c.jurisdiction}\nURL: ${r.c.url}\n${r.c.text}`)
+    .map((r, i) => `[${i + 1}] ${r.instrument} — ${r.jurisdiction}${r.citation ? ` (${r.citation})` : ""}\nURL: ${r.url}\n${r.sourceQuote || r.text}`)
     .join("\n\n");
 
   const prompt = `You are AILA, a digital-trade regulatory analyst. Answer the QUESTION using ONLY the CONTEXT excerpts.
-Rules:
-- Cite the excerpts you rely on with bracketed numbers like [1], [2].
-- If the context is insufficient, say so plainly and set confidence low — do NOT invent rules.
-- Be concise (3-5 sentences), neutral, and practical for a business reader.
+Produce a structured, practical brief for a business reader. Ground every claim in the excerpts and cite with bracketed numbers like [1], [2].
+If the context is insufficient, say so in "summary", keep arrays short/empty, set verdict "Unclear from sources", and set a low confidence — do NOT invent rules.
 
-Return ONLY JSON: {"answer":"<text with [n] citations>","confidence":<0-1>,"citations":[<numbers used>]}
+Return ONLY JSON of this shape:
+{
+  "summary": "<2-3 sentence direct answer to the question, with [n] citations>",
+  "verdict": "<one short label: Permitted | Permitted with conditions | Restricted | Prohibited | Unclear from sources>",
+  "keyPoints": [ {"heading":"<short obligation/condition>","detail":"<1 sentence, with [n]>","citations":[<numbers>]} ],
+  "risks": ["<concrete risk or exposure, with [n] where possible>"],
+  "recommendations": ["<actionable step>"],
+  "confidence": <0-1>,
+  "citations": [<all excerpt numbers used>]
+}
+Keep keyPoints to 2-5, risks and recommendations to 0-4 each.
 
 QUESTION: ${question}
 
@@ -275,25 +323,46 @@ ${context}`;
   const data: any = await res.json();
   const text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
   let parsed: any = {};
-  try { parsed = JSON.parse(text); } catch { parsed = { answer: text, confidence: 0.4, citations: [] }; }
+  try { parsed = JSON.parse(text); } catch { parsed = { summary: text, confidence: 0.4, citations: [] }; }
 
   const used: number[] = Array.isArray(parsed.citations) ? parsed.citations : [];
   const citations: RagCitation[] = (used.length ? used : ranked.map((_, i) => i + 1))
     .map((n) => ranked[n - 1])
     .filter(Boolean)
     .map((r, i) => ({
-      n: i + 1, instrument: r.c.instrument, jurisdiction: r.c.jurisdiction, url: r.c.url,
-      score: Number(r.score.toFixed(3)),
-      snippet: r.c.text.replace(`${r.c.instrument} (${r.c.jurisdiction}). `, "").slice(0, 240).trim() + "…",
+      n: i + 1,
+      instrument: r.citation ? `${r.instrument} · ${r.citation}` : r.instrument,
+      jurisdiction: r.jurisdiction, url: r.url,
+      score: Number(Math.min(1, r.score).toFixed(3)),
+      snippet: (r.sourceQuote || r.text).replace(`${r.instrument} (${r.jurisdiction}). `, "").slice(0, 240).trim() + "…",
     }));
 
   const modelConf = typeof parsed.confidence === "number" ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5;
   // self-reflective: discount when retrieval is weak
   const confidence = Number((modelConf * (0.45 + 0.55 * Math.min(1, topScore / 0.8))).toFixed(2));
 
+  const str = (v: any, fb = "") => (typeof v === "string" ? v : fb);
+  const strArr = (v: any) => (Array.isArray(v) ? v.filter((x) => typeof x === "string").slice(0, 4) : []);
+  const summary = str(parsed.summary, "I could not find enough in the corpus to answer this confidently.");
+  const keyPoints: RagKeyPoint[] = Array.isArray(parsed.keyPoints)
+    ? parsed.keyPoints
+        .filter((p: any) => p && typeof p.heading === "string")
+        .slice(0, 5)
+        .map((p: any) => ({
+          heading: str(p.heading),
+          detail: str(p.detail),
+          citations: Array.isArray(p.citations) ? p.citations.filter((n: any) => typeof n === "number") : [],
+        }))
+    : [];
+
   return {
     question,
-    answer: typeof parsed.answer === "string" ? parsed.answer : "I could not find enough in the corpus to answer confidently.",
+    answer: summary,
+    summary,
+    verdict: str(parsed.verdict, "Unclear from sources"),
+    keyPoints,
+    risks: strArr(parsed.risks),
+    recommendations: strArr(parsed.recommendations),
     confidence,
     grounded: topScore > 0.45 && citations.length > 0,
     citations,

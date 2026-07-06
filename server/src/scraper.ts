@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import type { RegulationSource, ScrapeResult } from "./types.js";
-import { insertScrape, getLatestScrape } from "./db.js";
+import { insertScrape, getLatestScrape, snapshotVersion } from "./db.js";
 import { ocrPdf, likelyScanned } from "./ocr.js";
 
 
@@ -138,6 +138,7 @@ export async function scrapeSource(source: RegulationSource): Promise<ScrapeResu
       const text = await fetchPdfText(source.url).catch(() => null);
       if (text && text.length >= 120) {
         base.excerpt = text.slice(0, MAX_EXCERPT);
+        void snapshotVersion(source.id, text).catch(() => {}); // version control
       } else {
         const buf = await fetch(source.url, { headers: BROWSER_HEADERS })
           .then(r => r.arrayBuffer())
@@ -189,6 +190,9 @@ export async function scrapeSource(source: RegulationSource): Promise<ScrapeResu
     base.title = title || undefined;
     base.excerpt = excerpt || undefined;
     base.documentLinks = documentLinks;
+    // version control: snapshot fuller body text (only stored when it changes)
+    const bodyFull = main.text().replace(/\s+/g, " ").trim().slice(0, 20000);
+    void snapshotVersion(source.id, bodyFull).catch(() => {});
     return base;
   } catch (err) {
     base.error = err instanceof Error ? err.message : String(err);

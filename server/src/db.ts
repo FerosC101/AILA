@@ -20,6 +20,7 @@
  */
 
 import { createClient, type Client } from "@libsql/client";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -98,7 +99,78 @@ export async function initDb(): Promise<void> {
       translated_at INTEGER NOT NULL DEFAULT (unixepoch()),
       PRIMARY KEY (source_id, lang)
     );
+
+    CREATE TABLE IF NOT EXISTS clauses (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_id      TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+      jurisdiction   TEXT NOT NULL,
+      instrument     TEXT NOT NULL,
+      url            TEXT NOT NULL,
+      type           TEXT NOT NULL,        -- obligation|restriction|exception|penalty|right|definition
+      text           TEXT NOT NULL,        -- the extracted rule, in plain terms
+      actor          TEXT,                 -- who it binds (controller, processor, individual, government)
+      rdtii          TEXT,                 -- JSON array of RDTII category names
+      penalty        TEXT,
+      effective_date TEXT,
+      citation       TEXT,                 -- section / paragraph reference
+      source_quote   TEXT,                 -- verbatim excerpt used as evidence
+      confidence     REAL,
+      created_at     INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_clauses_source ON clauses(source_id);
+    CREATE INDEX IF NOT EXISTS idx_clauses_jur    ON clauses(jurisdiction);
+    CREATE INDEX IF NOT EXISTS idx_clauses_type   ON clauses(type);
   `);
+
+  await db.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS versions (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_id   TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+      hash        TEXT NOT NULL,
+      text        TEXT NOT NULL,
+      captured_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_versions_source ON versions(source_id, captured_at);
+  `);
+
+  // migration: clause embeddings (older DBs created the table without it)
+  try { await db.execute("ALTER TABLE clauses ADD COLUMN embedding TEXT"); } catch { /* already exists */ }
+}
+
+// ── Versions (semantic version control) ────────────────────────────────────────
+
+function hashText(t: string): string {
+  return createHash("sha1").update(t).digest("hex");
+}
+
+export interface DocVersion { id: number; hash: string; text: string; capturedAt: number }
+
+/** Snapshot a document's text — only inserts a new row when the content changed. */
+export async function snapshotVersion(sourceId: string, text: string): Promise<{ changed: boolean; versions: number }> {
+  if (!text || text.length < 80) return { changed: false, versions: 0 };
+  const hash = hashText(text);
+  const latest = await db.execute({ sql: "SELECT hash FROM versions WHERE source_id = ? ORDER BY captured_at DESC LIMIT 1", args: [sourceId] });
+  const prevHash = (latest.rows[0] as any)?.hash;
+  if (prevHash === hash) {
+    const c = await db.execute({ sql: "SELECT COUNT(*) as n FROM versions WHERE source_id = ?", args: [sourceId] });
+    return { changed: false, versions: Number((c.rows[0] as any).n) };
+  }
+  await db.execute({ sql: "INSERT INTO versions (source_id, hash, text) VALUES (?, ?, ?)", args: [sourceId, hash, text.slice(0, 20000)] });
+  const c = await db.execute({ sql: "SELECT COUNT(*) as n FROM versions WHERE source_id = ?", args: [sourceId] });
+  return { changed: true, versions: Number((c.rows[0] as any).n) };
+}
+
+/** Most recent two versions of a source (for diffing), newest first. */
+export async function getLatestTwoVersions(sourceId: string): Promise<DocVersion[]> {
+  const res = await db.execute({ sql: "SELECT * FROM versions WHERE source_id = ? ORDER BY captured_at DESC LIMIT 2", args: [sourceId] });
+  return res.rows.map((r: any) => ({ id: Number(r.id), hash: r.hash, text: r.text, capturedAt: Number(r.captured_at) }));
+}
+
+/** Version history metadata (no text) for a source. */
+export async function getVersionHistory(sourceId: string): Promise<Array<{ id: number; hash: string; capturedAt: number; length: number }>> {
+  const res = await db.execute({ sql: "SELECT id, hash, captured_at, LENGTH(text) as len FROM versions WHERE source_id = ? ORDER BY captured_at DESC", args: [sourceId] });
+  return res.rows.map((r: any) => ({ id: Number(r.id), hash: r.hash, capturedAt: Number(r.captured_at), length: Number(r.len) }));
 }
 
 // ── embedding helpers ─────────────────────────────────────────────────────────
@@ -356,13 +428,88 @@ export async function getCachedTranslation(
   return row ? (row.translated as string) : null;
 }
 
+// ── Clauses (clause-level extraction) ──────────────────────────────────────────
+
+export interface StoredClause {
+  id?: number;
+  sourceId: string;
+  jurisdiction: string;
+  instrument: string;
+  url: string;
+  type: string;
+  text: string;
+  actor?: string;
+  rdtii?: string[];
+  penalty?: string;
+  effectiveDate?: string;
+  citation?: string;
+  sourceQuote?: string;
+  confidence?: number;
+  embedding?: number[];
+}
+
+/** Replace all clauses for a source (idempotent re-extraction). */
+export async function saveClauses(sourceId: string, clauses: StoredClause[]): Promise<void> {
+  const stmts: { sql: string; args: any[] }[] = [
+    { sql: "DELETE FROM clauses WHERE source_id = ?", args: [sourceId] },
+    ...clauses.map((c) => ({
+      sql: `INSERT INTO clauses
+        (source_id, jurisdiction, instrument, url, type, text, actor, rdtii, penalty, effective_date, citation, source_quote, confidence, embedding)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        sourceId, c.jurisdiction, c.instrument, c.url, c.type, c.text,
+        c.actor ?? null, JSON.stringify(c.rdtii ?? []), c.penalty ?? null,
+        c.effectiveDate ?? null, c.citation ?? null, c.sourceQuote ?? null, c.confidence ?? null,
+        c.embedding && c.embedding.length ? encodeEmbedding(c.embedding) : null,
+      ],
+    })),
+  ];
+  await db.batch(stmts, "write");
+}
+
+/** Clauses that have embeddings — used as high-precision retrieval units in RAG. */
+export async function loadClauseEmbeddings(): Promise<StoredClause[]> {
+  const res = await db.execute("SELECT * FROM clauses WHERE embedding IS NOT NULL");
+  return res.rows.map((row: any) => ({ ...hydrateClause(row), embedding: decodeEmbedding(row.embedding) }));
+}
+
+function hydrateClause(row: any): StoredClause {
+  return {
+    id: Number(row.id), sourceId: row.source_id, jurisdiction: row.jurisdiction,
+    instrument: row.instrument, url: row.url, type: row.type, text: row.text,
+    actor: row.actor ?? undefined, rdtii: row.rdtii ? JSON.parse(row.rdtii) : [],
+    penalty: row.penalty ?? undefined, effectiveDate: row.effective_date ?? undefined,
+    citation: row.citation ?? undefined, sourceQuote: row.source_quote ?? undefined,
+    confidence: row.confidence ?? undefined,
+  };
+}
+
+/** Query clauses with optional filters (jurisdiction / type / actor substring). */
+export async function loadClauses(filter: { jurisdiction?: string; type?: string; sourceId?: string; limit?: number } = {}): Promise<StoredClause[]> {
+  const where: string[] = [];
+  const args: any[] = [];
+  if (filter.sourceId) { where.push("source_id = ?"); args.push(filter.sourceId); }
+  if (filter.jurisdiction) { where.push("LOWER(jurisdiction) = ?"); args.push(filter.jurisdiction.toLowerCase()); }
+  if (filter.type) { where.push("type = ?"); args.push(filter.type); }
+  const sql = `SELECT * FROM clauses ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY jurisdiction, source_id, id LIMIT ?`;
+  args.push(filter.limit ?? 500);
+  const res = await db.execute({ sql, args });
+  return res.rows.map(hydrateClause);
+}
+
+export async function getClauseCount(): Promise<number> {
+  const res = await db.execute("SELECT COUNT(*) as n FROM clauses");
+  return Number((res.rows[0] as any).n);
+}
+
 // ── Stats (health endpoint / dashboard) ───────────────────────────────────────
 
 export async function dbStats() {
-  const [sources, scrapes, chunks, ok, fail, lastScrape] = await Promise.all([
+  const [sources, scrapes, chunks, clauses, ok, fail, lastScrape] = await Promise.all([
     db.execute("SELECT COUNT(*) as n FROM sources"),
     db.execute("SELECT COUNT(*) as n FROM scrapes"),
     db.execute("SELECT COUNT(*) as n FROM chunks"),
+    db.execute("SELECT COUNT(*) as n FROM clauses"),
     db.execute("SELECT COUNT(*) as n FROM scrapes WHERE ok = 1"),
     db.execute("SELECT COUNT(*) as n FROM scrapes WHERE ok = 0"),
     db.execute("SELECT MAX(created_at) as t FROM scrapes"),
@@ -372,6 +519,7 @@ export async function dbStats() {
     sources:      Number((sources.rows[0] as any).n),
     scrapes:      Number((scrapes.rows[0] as any).n),
     chunks:       Number((chunks.rows[0] as any).n),
+    clauses:      Number((clauses.rows[0] as any).n),
     ok:           Number((ok.rows[0] as any).n),
     fail:         Number((fail.rows[0] as any).n),
     lastScrapeAt: (lastScrape.rows[0] as any).t ?? null,
