@@ -3059,11 +3059,14 @@ function SettingsView() {
 }
 
 // ==================== APP ====================
+const GlobeView = React.lazy(() => import("./GlobeView"));
+
 export default function App() {
   const [view,setView]=useState<ViewId>("dashboard");
   const [selNode,setSelNode]=useState<GNode|null>(null);
   const [query,setQuery]=useState("");
   const [answer,setAnswer]=useState<RagResult|null>(null);
+  const [viz,setViz]=useState<"graph"|"globe">("graph");
   const isDash=view==="dashboard"||view==="graph";
 
   const onNav=(v:ViewId)=>{
@@ -3080,9 +3083,28 @@ export default function App() {
 
   return (
     <div className="relative w-full h-screen overflow-hidden" style={{background:"#FFFFFF",fontFamily:"Inter, sans-serif"}}>
-      <RegulatoryGraph onSelect={onGraphSelect} selId={selNode?.id||null} dimmed={!isDash} simulateAction={{tick:0,step:"crawler"}}/>
+      {viz==="globe" ? (
+        <React.Suspense fallback={<div className="absolute inset-0 flex items-center justify-center"><span className="text-xs tracking-widest uppercase" style={{color:"#94A3B8"}}>Loading globe…</span></div>}>
+          <GlobeView onSelect={onGraphSelect} dimmed={!isDash}/>
+        </React.Suspense>
+      ) : (
+        <RegulatoryGraph onSelect={onGraphSelect} selId={selNode?.id||null} dimmed={!isDash} simulateAction={{tick:0,step:"crawler"}}/>
+      )}
 
       <TopNav cur={view} onNav={onNav}/>
+
+      {/* Graph / Globe toggle */}
+      {isDash && (
+        <div className="fixed z-40 flex rounded-full overflow-hidden" style={{top:"68px",right:"20px",border:"1px solid #E5E9F0",background:"rgba(255,255,255,0.9)",backdropFilter:"blur(10px)",boxShadow:"0 4px 14px rgba(15,23,42,0.08)"}}>
+          {(["graph","globe"] as const).map(m=>(
+            <button key={m} onClick={()=>{setViz(m); setSelNode(null);}}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold transition-colors"
+              style={{background:viz===m?"#1E3A5F":"transparent",color:viz===m?"#fff":"#64748B",border:"none",cursor:"pointer"}}>
+              {m==="graph"?<Network size={12}/>:<Globe size={12}/>}{m==="graph"?"Graph":"Globe"}
+            </button>
+          ))}
+        </div>
+      )}
 
       <AnimatePresence>
         {isDash && selNode &&(
