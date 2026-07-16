@@ -7,9 +7,11 @@ import { fetchText, fetchPdfText } from "./scraper.js";
 import { renderText, renderEnabled } from "./render.js";
 import { loadSources } from "./sources.js";
 import { activeUrlSet, healthReady, refreshHealth } from "./scanner.js";
-import { saveChunks, loadAllChunks, getSourceEmbeddedAt, loadClauseEmbeddings, type StoredClause } from "./db.js";
+import { saveChunks, loadAllChunks, getSourceEmbeddedAt, loadClauseEmbeddings, upsertSources, type StoredClause } from "./db.js";
 import { ensureEnglish } from "./translate.js";
 import { recordGeminiUsage } from "./cost.js";
+import { searchWeb } from "./websearch.js";
+import { findSourceByUrl } from "./sources.js";
 
 
 
@@ -247,7 +249,7 @@ export async function buildIndex(): Promise<{ chunks: number; sources: number }>
 }
 
 // ---- query -------------------------------------------------------------------
-export interface RagCitation { n: number; instrument: string; jurisdiction: string; url: string; score: number; snippet: string }
+export interface RagCitation { n: number; instrument: string; jurisdiction: string; url: string; score: number; snippet: string; live?: boolean }
 export interface RagKeyPoint { heading: string; detail: string; citations: number[] }
 export interface RagResult {
   question: string;
@@ -261,33 +263,99 @@ export interface RagResult {
   grounded: boolean;
   citations: RagCitation[];
   retrieved: number;
+  sourcesAdded?: number;       // sources scraped live from the web and added to the corpus
 }
 
 interface RetrievedItem {
   instrument: string; jurisdiction: string; url: string; text: string;
-  citation?: string; sourceQuote?: string; kind: "chunk" | "clause"; score: number;
+  citation?: string; sourceQuote?: string; kind: "chunk" | "clause" | "live"; score: number;
 }
 
-export async function ragQuery(question: string, k = 6): Promise<RagResult> {
-  if (!INDEX.length) await loadIndexFromDb();   // prefer the persisted index
-  if (!INDEX.length) await buildIndex();         // only embed from scratch if DB is empty
-  if (!CLAUSE_INDEX.length) await loadClauseIndex(); // high-precision clause units
-  const [qEmb] = await embedBatch([question]);
+const LIVE_THRESHOLD = 0.62;   // below this top score, trigger live web retrieval
 
-  const chunkItems: RetrievedItem[] = INDEX.map((c) => ({
-    instrument: c.instrument, jurisdiction: c.jurisdiction, url: c.url, text: c.text,
-    kind: "chunk", score: cosine(qEmb, c.embedding),
-  }));
-  // clauses are precise + already cited → small ranking boost
-  const clauseItems: RetrievedItem[] = CLAUSE_INDEX.map((c) => ({
-    instrument: c.instrument, jurisdiction: c.jurisdiction, url: c.url,
-    text: c.text, citation: c.citation, sourceQuote: c.sourceQuote,
-    kind: "clause", score: cosine(qEmb, c.embedding!) * 1.07,
-  }));
+// ASEAN+ jurisdictions we can name-match from a question (for nicer live citations).
+const KNOWN_JURISDICTIONS = ["Singapore", "Malaysia", "Thailand", "Vietnam", "Indonesia", "Philippines",
+  "Cambodia", "Laos", "Myanmar", "Brunei", "Timor-Leste", "Australia", "China", "Japan", "Korea", "India"];
 
-  const ranked = [...chunkItems, ...clauseItems].sort((a, b) => b.score - a.score).slice(0, k);
+function guessJurisdiction(question: string, url: string): string {
+  const q = question.toLowerCase();
+  const hit = KNOWN_JURISDICTIONS.find((j) => q.includes(j.toLowerCase()));
+  if (hit) return hit;
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "Web"; }
+}
 
+/** Derive a readable instrument title from a page (HTML <title>) or URL basename. */
+function titleFor(html: string | null, url: string): string {
+  if (html) {
+    const $ = cheerio.load(html);
+    const t = ($('meta[property="og:title"]').attr("content") || $("title").first().text() || "").replace(/\s+/g, " ").trim();
+    if (t) return t.slice(0, 120);
+  }
+  try {
+    const seg = new URL(url).pathname.split("/").filter(Boolean).pop() || new URL(url).hostname;
+    return decodeURIComponent(seg).replace(/[-_]+/g, " ").replace(/\.[a-z]+$/i, "").slice(0, 120) || url;
+  } catch { return url; }
+}
+
+/**
+ * Live web retrieval: search → scrape top authority-ranked results → embed →
+ * persist to the corpus (so future queries benefit) → return retrieval items.
+ */
+async function liveRetrieve(question: string, qEmb: number[]): Promise<{ items: RetrievedItem[]; sourcesAdded: number }> {
+  const urls = (await searchWeb(`${question} regulation law official`, 6))
+    .filter((u) => !findSourceByUrl(u))   // skip URLs already in the corpus
+    .slice(0, 3);
+  const items: RetrievedItem[] = [];
+  let added = 0;
+
+  for (const url of urls) {
+    try {
+      const isPdf = /\.pdf(\?|#|$)/i.test(url);
+      let html: string | null = null;
+      let text = "";
+      if (isPdf) {
+        text = (await fetchPdfText(url, 25_000, PAGE_CHARS).catch(() => null)) ?? "";
+      } else {
+        html = await fetchText(url, 12_000).catch(() => null);
+        if (html) {
+          const $ = cheerio.load(html);
+          $("script, style, noscript, svg, header, footer, nav, form").remove();
+          text = ($("main").length ? $("main") : $("body")).text().replace(/\s+/g, " ").trim().slice(0, PAGE_CHARS);
+        }
+      }
+      if (!text || text.length < 200) continue;
+
+      const sourceId = `live-${Buffer.from(url).toString("base64url").slice(0, 32)}`;
+      const jurisdiction = guessJurisdiction(question, url);
+      const instrument = titleFor(html, url);
+      text = await ensureEnglish(text, sourceId, jurisdiction);
+
+      const parts = chunkText(text);
+      const embs = await embedBatch(parts);
+      const chunks = parts
+        .map((t, i) => ({ text: t, embedding: embs[i] ?? [] }))
+        .filter((c) => c.embedding.length);
+      if (!chunks.length) continue;
+
+      // retrieval items for this query
+      for (const c of chunks) items.push({ instrument, jurisdiction, url, text: c.text, kind: "live", score: cosine(qEmb, c.embedding) });
+
+      // persist to the corpus permanently
+      await upsertSources([{ id: sourceId, jurisdiction, instrument, url, region: "Live", format: isPdf ? "pdf" : "html", cadence: "monthly" }]);
+      await saveChunks(sourceId, chunks.map((c) => ({ text: c.text, embedding: c.embedding, jurisdiction, instrument, url })));
+      for (const c of chunks) INDEX.push({ id: Date.now() + INDEX.length, sourceId, jurisdiction, instrument, url, text: c.text, embedding: c.embedding });
+      added++;
+    } catch { /* skip this URL */ }
+  }
+  return { items, sourcesAdded: added };
+}
+
+/** Generate a grounded answer over a ranked set of retrieved items. */
+async function answerFrom(question: string, ranked: RetrievedItem[], priorFindings?: string): Promise<RagResult> {
   const topScore = ranked[0]?.score ?? 0;
+  const priorBlock = priorFindings
+    ? `PRIOR FINDINGS FROM THIS CONVERSATION (reuse and reference where relevant):\n${priorFindings}\n\n`
+    : "";
   const context = ranked
     .map((r, i) => `[${i + 1}] ${r.instrument} — ${r.jurisdiction}${r.citation ? ` (${r.citation})` : ""}\nURL: ${r.url}\n${r.sourceQuote || r.text}`)
     .join("\n\n");
@@ -310,7 +378,7 @@ Keep keyPoints to 2-5, risks and recommendations to 0-4 each.
 
 QUESTION: ${question}
 
-CONTEXT:
+${priorBlock}CONTEXT:
 ${context}`;
 
   const res = await fetch(
@@ -338,6 +406,7 @@ ${context}`;
       jurisdiction: r.jurisdiction, url: r.url,
       score: Number(Math.min(1, r.score).toFixed(3)),
       snippet: (r.sourceQuote || r.text).replace(`${r.instrument} (${r.jurisdiction}). `, "").slice(0, 240).trim() + "…",
+      live: r.kind === "live",
     }));
 
   const modelConf = typeof parsed.confidence === "number" ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5;
@@ -371,4 +440,48 @@ ${context}`;
     citations,
     retrieved: ranked.length,
   };
+}
+
+export async function ragQuery(
+  question: string,
+  opts: { k?: number; live?: boolean; priorFindings?: string } = {},
+): Promise<RagResult> {
+  const k = opts.k ?? 6;
+  if (!INDEX.length) await loadIndexFromDb();   // prefer the persisted index
+  if (!INDEX.length) await buildIndex();         // only embed from scratch if DB is empty
+  if (!CLAUSE_INDEX.length) await loadClauseIndex(); // high-precision clause units
+  const [qEmb] = await embedBatch([question]);
+
+  const chunkItems: RetrievedItem[] = INDEX.map((c) => ({
+    instrument: c.instrument, jurisdiction: c.jurisdiction, url: c.url, text: c.text,
+    kind: "chunk", score: cosine(qEmb, c.embedding),
+  }));
+  // clauses are precise + already cited → small ranking boost
+  const clauseItems: RetrievedItem[] = CLAUSE_INDEX.map((c) => ({
+    instrument: c.instrument, jurisdiction: c.jurisdiction, url: c.url,
+    text: c.text, citation: c.citation, sourceQuote: c.sourceQuote,
+    kind: "clause", score: cosine(qEmb, c.embedding!) * 1.07,
+  }));
+
+  const corpusRanked = [...chunkItems, ...clauseItems].sort((a, b) => b.score - a.score).slice(0, k);
+
+  // First pass over the local corpus.
+  let result = await answerFrom(question, corpusRanked, opts.priorFindings);
+  let sourcesAdded = 0;
+
+  // Decide whether to go to the web: forced on, or (auto) the corpus answer is weak.
+  const weak = result.confidence < 0.45 || !result.grounded || /unclear/i.test(result.verdict);
+  const goLive = opts.live === true || (opts.live !== false && weak);
+  if (goLive) {
+    const live = await liveRetrieve(question, qEmb).catch(() => ({ items: [], sourcesAdded: 0 }));
+    sourcesAdded = live.sourcesAdded;
+    if (live.items.length) {
+      const merged = [...chunkItems, ...clauseItems, ...live.items].sort((a, b) => b.score - a.score).slice(0, k);
+      const liveResult = await answerFrom(question, merged, opts.priorFindings);
+      // keep whichever answer is more confident (live usually wins when it found real material)
+      if (liveResult.confidence >= result.confidence) result = liveResult;
+    }
+  }
+
+  return { ...result, sourcesAdded };
 }

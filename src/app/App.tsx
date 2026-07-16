@@ -10,7 +10,7 @@ import {
   Link,
   FileText, Scale,
   Heart, Share2, ChevronLeft, Eye, MessageCircle,
-  Download,
+  Download, Paperclip,
 } from "lucide-react";
 
 // ==================== TYPES ====================
@@ -2191,9 +2191,10 @@ const CITED_PROVISIONS = [
   { src:"NPC Circular 16-03", flag:"🇵🇭", date:"2016", note:"A personal data breach involving sensitive personal information that may give rise to a real risk of serious harm must be notified to the Commission and affected data subjects within 72 hours of knowledge." },
 ];
 
-type RagCitation = { n:number; instrument:string; jurisdiction:string; url:string; score:number; snippet:string };
+type RagCitation = { n:number; instrument:string; jurisdiction:string; url:string; score:number; snippet:string; live?:boolean };
 type RagKeyPoint = { heading:string; detail:string; citations:number[] };
-type RagResult = { question:string; answer:string; summary?:string; verdict?:string; keyPoints?:RagKeyPoint[]; risks?:string[]; recommendations?:string[]; confidence:number; grounded:boolean; citations:RagCitation[]; retrieved:number };
+type RagResult = { question:string; answer:string; summary?:string; verdict?:string; keyPoints?:RagKeyPoint[]; risks?:string[]; recommendations?:string[]; confidence:number; grounded:boolean; citations:RagCitation[]; retrieved:number; sourcesAdded?:number; conversationId?:string; articleId?:string };
+type ArticleCard = { id:string; question:string; verdict?:string; confidence?:number };
 
 function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBack: () => void; onSimulate: () => void; result?: RagResult|null }) {
   const r = SME_RICH_RESPONSE;
@@ -2231,6 +2232,7 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
                 <span>{Math.round(result.confidence*100)}% confidence</span>
                 <span style={{display:"inline-flex",alignItems:"center",gap:"6px"}}><MessageCircle size={13}/> {result.citations.length} citations</span>
                 <span style={{display:"inline-flex",alignItems:"center",gap:"6px"}}>{result.retrieved} excerpts retrieved</span>
+                {!!result.sourcesAdded&&<span style={{display:"inline-flex",alignItems:"center",gap:"6px",border:"1px solid rgba(255,255,255,0.35)",borderRadius:"20px",padding:"3px 10px"}}><Globe size={12}/> {result.sourcesAdded} scraped live</span>}
               </>
             ) : (
               <>
@@ -2334,7 +2336,7 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
                       </div>
                       {/* RIGHT — structured extraction */}
                       <div style={{padding:"12px 14px"}}>
-                        <p style={{fontSize:"13px",fontWeight:600,color:"#0F172A",margin:"0 0 2px"}}>{c.instrument}</p>
+                        <p style={{fontSize:"13px",fontWeight:600,color:"#0F172A",margin:"0 0 2px"}}>{c.instrument}{c.live&&<span style={{marginLeft:"6px",fontSize:"9px",fontWeight:700,letterSpacing:"0.05em",padding:"1px 5px",borderRadius:"20px",background:"rgba(4,120,87,0.1)",color:"#047857",verticalAlign:"middle"}}>LIVE</span>}</p>
                         <p style={{fontSize:"11px",color:"#64748B",margin:"0 0 8px"}}>{c.jurisdiction}</p>
                         <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px"}}>
                           <div style={{flex:1,height:"4px",borderRadius:"4px",background:"#E5E9F0",overflow:"hidden"}}>
@@ -2644,13 +2646,26 @@ function CrawlerGraphLoader() {
   );
 }
 
-function SMEAssistant({ onAsk }: { onAsk: (q: string, result: RagResult|null) => void }) {
+function SMEAssistant({ onAsk, conversationId, setConversationId }: { onAsk: (q: string, result: RagResult|null) => void; conversationId: string|null; setConversationId: (id:string|null)=>void }) {
   const base=(import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
   const [msgs,setMsgs]=useState<ChatMsg[]>(INIT_MSGS);
   const [input,setInput]=useState("");
   const [pending,setPending]=useState(false);
+  const [uploading,setUploading]=useState(false);
+  const [articles,setArticles]=useState<ArticleCard[]>([]);
+  const [recent,setRecent]=useState<{id:string;title:string;articleCount?:number}[]>([]);
   const end=useRef<HTMLDivElement>(null);
+  const fileRef=useRef<HTMLInputElement>(null);
   useEffect(()=>{ end.current?.scrollIntoView({behavior:"smooth"}); },[msgs,pending]);
+
+  // Load recent conversations, and the current conversation's saved article cards.
+  useEffect(()=>{ if(base) fetch(`${base}/conversations`).then(r=>r.json()).then(d=>setRecent(Array.isArray(d)?d:[])).catch(()=>{}); },[base]);
+  useEffect(()=>{
+    if(!base||!conversationId){ setArticles([]); return; }
+    fetch(`${base}/conversations/${conversationId}`).then(r=>r.json()).then(d=>{
+      if(d?.articles) setArticles(d.articles.map((a:any)=>({id:a.id,question:a.question,verdict:a.verdict,confidence:a.confidence})));
+    }).catch(()=>{});
+  },[base,conversationId]);
 
   const send=async()=>{
     if (!input.trim()||pending) return;
@@ -2658,18 +2673,44 @@ function SMEAssistant({ onAsk }: { onAsk: (q: string, result: RagResult|null) =>
     setInput("");
     setMsgs(m=>[...m,{role:"user",text:q}]);
     setPending(true);
-    // RAG: retrieve + grounded answer, then redirect to the full answer page.
+    // RAG: retrieve (+ live web fallback) + grounded answer, then redirect to the full answer page.
     const started=Date.now();
     let result:RagResult|null=null;
     try{
       if(base){
-        const r=await fetch(`${base}/rag/query`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question:q})});
+        const r=await fetch(`${base}/rag/query`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question:q,conversationId})});
         if(r.ok) result=await r.json();
       }
     }catch{ /* fall back to static answer */ }
+    if(result?.conversationId){
+      setConversationId(result.conversationId);
+      if(result.articleId) setArticles(a=>[...a,{id:result!.articleId!,question:q,verdict:result!.verdict,confidence:result!.confidence}]);
+    }
     // keep the search animation visible for at least ~1.4s so it doesn't flash
     const wait=Math.max(0,1400-(Date.now()-started));
     setTimeout(()=>{ setPending(false); onAsk(q,result); },wait);
+  };
+
+  const openArticle=async(id:string)=>{
+    if(!base) return;
+    try{ const a=await fetch(`${base}/articles/${id}`).then(r=>r.json()); if(a?.payload) onAsk(a.question,a.payload); }catch{ /* ignore */ }
+  };
+
+  const newChat=()=>{ setConversationId(null); setArticles([]); setMsgs(INIT_MSGS); };
+
+  const onUpload=async(e:React.ChangeEvent<HTMLInputElement>)=>{
+    const f=e.target.files?.[0]; if(!f||!base) return;
+    e.target.value="";
+    setUploading(true);
+    setMsgs(m=>[...m,{role:"user",text:`📎 ${f.name}`}]);
+    try{
+      const fd=new FormData(); fd.append("file",f);
+      const r=await fetch(`${base}/upload`,{method:"POST",body:fd});
+      const d=await r.json();
+      const n=d?.clauses?.length ?? d?.pipeline?.extraction?.clauseCount ?? 0;
+      setMsgs(m=>[...m,{role:"ai",text:r.ok?`Indexed “${f.name}” — ${n} clause${n===1?"":"s"} extracted. It's now part of the corpus and I can cite it in answers.`:`Couldn't process “${f.name}”: ${d?.error||"upload failed"}.`}]);
+    }catch{ setMsgs(m=>[...m,{role:"ai",text:`Couldn't upload “${f.name}”.`}]); }
+    setUploading(false);
   };
 
   return (
@@ -2677,11 +2718,43 @@ function SMEAssistant({ onAsk }: { onAsk: (q: string, result: RagResult|null) =>
       <div className="flex items-center gap-3 mb-4">
         <MessageSquare size={18} style={{color:"#1E3A5F"}}/>
         <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Legal Research Assistant</h1>
-        <div className="ml-auto flex items-center gap-2 text-xs px-2.5 py-1 rounded-full"
-          style={{background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.2)",color:"#10B981"}}>
-          <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"/>ASEAN corpus loaded
+        <div className="ml-auto flex items-center gap-2">
+          {recent.length>0&&(
+            <select value={conversationId||""} onChange={e=>{ if(e.target.value){ setConversationId(e.target.value); setMsgs(INIT_MSGS); } else newChat(); }}
+              className="text-xs px-2 py-1 rounded-lg outline-none" style={{border:"1px solid #E5E9F0",color:"#475569",background:"#fff",maxWidth:"180px"}}>
+              <option value="">＋ New conversation</option>
+              {recent.map(c=><option key={c.id} value={c.id}>{c.title.slice(0,32)}{c.articleCount?` (${c.articleCount})`:""}</option>)}
+            </select>
+          )}
+          <div className="flex items-center gap-2 text-xs px-2.5 py-1 rounded-full"
+            style={{background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.2)",color:"#10B981"}}>
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"/>Live research on
+          </div>
         </div>
       </div>
+
+      {/* Saved answers rail — click a card to reopen the article */}
+      {articles.length>0&&(
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wider" style={{color:"#94A3B8"}}>Saved answers · this conversation</span>
+            <button onClick={newChat} className="text-xs" style={{color:"#1E3A5F",background:"none",border:"none",cursor:"pointer"}}>＋ New</button>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1" style={{scrollbarWidth:"thin"}}>
+            {articles.map(a=>(
+              <button key={a.id} onClick={()=>openArticle(a.id)}
+                className="shrink-0 text-left rounded-xl px-3 py-2 transition-colors"
+                style={{width:"200px",background:"#fff",border:"1px solid #E5E9F0",cursor:"pointer"}}>
+                <p className="text-xs font-medium leading-snug mb-1" style={{color:"#0F172A",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{a.question}</p>
+                <div className="flex items-center gap-1.5">
+                  {a.verdict&&<span className="text-xs px-1.5 py-0.5 rounded-full" style={{background:"rgba(30,58,95,0.07)",color:"#475569",fontSize:"10px"}}>{a.verdict}</span>}
+                  {a.confidence!=null&&<span className="text-xs" style={{color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{Math.round(a.confidence*100)}%</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-2 mb-4 flex-wrap">
         {["Can I store health data offshore?","Cross-border transfer rules","Fintech licensing in SG","AI regulation requirements"].map(q=>(
@@ -2724,6 +2797,12 @@ function SMEAssistant({ onAsk }: { onAsk: (q: string, result: RagResult|null) =>
       </div>
 
       <div className="mt-4 flex gap-2">
+        <input ref={fileRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.tiff,.txt" onChange={onUpload} style={{display:"none"}}/>
+        <button onClick={()=>fileRef.current?.click()} disabled={uploading} title="Upload or scan a document (PDF, image, or text) to add it to the corpus"
+          className="px-3 py-3 rounded-xl flex items-center justify-center"
+          style={{background:"#fff",border:"1px solid rgba(0,0,0,0.1)",cursor:uploading?"default":"pointer"}}>
+          {uploading?<span className="w-4 h-4 rounded-full animate-spin" style={{border:"2px solid #CBD5E1",borderTopColor:"#1E3A5F"}}/>:<Paperclip size={16} style={{color:"#64748B"}}/>}
+        </button>
         <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()}
           placeholder="Ask about regulatory requirements, compliance obligations, or specific laws..."
           className="flex-1 rounded-xl px-4 py-3 text-sm outline-none"
@@ -3116,6 +3195,7 @@ export default function App() {
   const [selNode,setSelNode]=useState<GNode|null>(null);
   const [query,setQuery]=useState("");
   const [answer,setAnswer]=useState<RagResult|null>(null);
+  const [conversationId,setConversationId]=useState<string|null>(null);
   const [viz,setViz]=useState<"graph"|"globe">("graph");
   const isDash=view==="dashboard"||view==="graph";
 
@@ -3171,7 +3251,7 @@ export default function App() {
             style={{background:"rgba(248,250,252,0.99)",paddingTop:"56px"}}>
             {view==="simulation"&&<SimulationSandbox/>}
             {view==="memory"&&<MemoryLayer/>}
-            {view==="sme"&&<SMEAssistant onAsk={onAsk}/>}
+            {view==="sme"&&<SMEAssistant onAsk={onAsk} conversationId={conversationId} setConversationId={setConversationId}/>}
             {view==="settings"&&<SettingsView/>}
             {view==="diff"&&<DiffEngine/>}
             {view==="countries"&&<CountriesView/>}

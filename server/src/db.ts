@@ -20,7 +20,7 @@
  */
 
 import { createClient, type Client } from "@libsql/client";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,6 +134,28 @@ export async function initDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_versions_source ON versions(source_id, captured_at);
   `);
 
+  // Chatbot conversation memory: each answer is saved as an "article" a user can
+  // revisit and the AI can reuse as prior knowledge within the conversation.
+  await db.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      id         TEXT PRIMARY KEY,
+      title      TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE TABLE IF NOT EXISTS articles (
+      id              TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      question        TEXT NOT NULL,
+      summary         TEXT NOT NULL,
+      verdict         TEXT,
+      confidence      REAL,
+      payload         TEXT NOT NULL,
+      created_at      INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_articles_conv ON articles(conversation_id, created_at);
+  `);
+
   // migration: clause embeddings (older DBs created the table without it)
   try { await db.execute("ALTER TABLE clauses ADD COLUMN embedding TEXT"); } catch { /* already exists */ }
   // migration: real RDTII indicator IDs (P#-I#) per clause
@@ -177,6 +199,68 @@ export async function getLatestTwoVersions(sourceId: string): Promise<DocVersion
 export async function getVersionHistory(sourceId: string): Promise<Array<{ id: number; hash: string; capturedAt: number; length: number }>> {
   const res = await db.execute({ sql: "SELECT id, hash, captured_at, LENGTH(text) as len FROM versions WHERE source_id = ? ORDER BY captured_at DESC", args: [sourceId] });
   return res.rows.map((r: any) => ({ id: Number(r.id), hash: r.hash, capturedAt: Number(r.captured_at), length: Number(r.len) }));
+}
+
+// ── Conversations & articles (chatbot memory) ─────────────────────────────────
+
+export interface ArticleRow { id: string; conversationId: string; question: string; summary: string; verdict?: string; confidence?: number; payload: any; createdAt: number }
+export interface ConversationRow { id: string; title: string; createdAt: number; updatedAt: number; articleCount?: number }
+
+/** Create a conversation (title = first question, trimmed). Returns its id. */
+export async function createConversation(title: string): Promise<string> {
+  const id = `conv-${randomUUID().slice(0, 8)}`;
+  await db.execute({ sql: "INSERT INTO conversations (id, title) VALUES (?, ?)", args: [id, title.slice(0, 120)] });
+  return id;
+}
+
+/** Persist an answer as an article in a conversation, and bump the conversation's updated_at. */
+export async function saveArticle(conversationId: string, question: string, result: any): Promise<string> {
+  const id = `art-${randomUUID().slice(0, 8)}`;
+  await db.batch([
+    { sql: `INSERT INTO articles (id, conversation_id, question, summary, verdict, confidence, payload)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [id, conversationId, question, String(result.summary ?? "").slice(0, 2000),
+        result.verdict ?? null, typeof result.confidence === "number" ? result.confidence : null, JSON.stringify(result)] },
+    { sql: "UPDATE conversations SET updated_at = unixepoch() WHERE id = ?", args: [conversationId] },
+  ], "write");
+  return id;
+}
+
+/** List conversations, newest first, with article counts. */
+export async function listConversations(limit = 50): Promise<ConversationRow[]> {
+  const res = await db.execute({
+    sql: `SELECT c.id, c.title, c.created_at, c.updated_at, COUNT(a.id) as n
+          FROM conversations c LEFT JOIN articles a ON a.conversation_id = c.id
+          GROUP BY c.id ORDER BY c.updated_at DESC LIMIT ?`,
+    args: [limit],
+  });
+  return res.rows.map((r: any) => ({ id: r.id, title: r.title, createdAt: Number(r.created_at), updatedAt: Number(r.updated_at), articleCount: Number(r.n) }));
+}
+
+/** A conversation with its ordered articles (lightweight — summary/verdict, not full payload). */
+export async function getConversation(id: string): Promise<{ conversation: ConversationRow; articles: ArticleRow[] } | null> {
+  const c = await db.execute({ sql: "SELECT * FROM conversations WHERE id = ?", args: [id] });
+  if (!c.rows.length) return null;
+  const row: any = c.rows[0];
+  const a = await db.execute({ sql: "SELECT id, conversation_id, question, summary, verdict, confidence, created_at FROM articles WHERE conversation_id = ? ORDER BY created_at ASC", args: [id] });
+  return {
+    conversation: { id: row.id, title: row.title, createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) },
+    articles: a.rows.map((r: any) => ({ id: r.id, conversationId: r.conversation_id, question: r.question, summary: r.summary, verdict: r.verdict ?? undefined, confidence: r.confidence ?? undefined, payload: undefined, createdAt: Number(r.created_at) })),
+  };
+}
+
+/** Full article payload (the stored RagResult) for reopening an answer. */
+export async function getArticle(id: string): Promise<ArticleRow | null> {
+  const res = await db.execute({ sql: "SELECT * FROM articles WHERE id = ?", args: [id] });
+  if (!res.rows.length) return null;
+  const r: any = res.rows[0];
+  return { id: r.id, conversationId: r.conversation_id, question: r.question, summary: r.summary, verdict: r.verdict ?? undefined, confidence: r.confidence ?? undefined, payload: JSON.parse(r.payload), createdAt: Number(r.created_at) };
+}
+
+/** Most-recent article summaries in a conversation — fed back to the model as prior findings. */
+export async function priorFindings(conversationId: string, limit = 3): Promise<string> {
+  const res = await db.execute({ sql: "SELECT question, summary FROM articles WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?", args: [conversationId, limit] });
+  return res.rows.reverse().map((r: any, i: number) => `[P${i + 1}] Q: ${r.question}\n    A: ${r.summary}`).join("\n");
 }
 
 // ── embedding helpers ─────────────────────────────────────────────────────────

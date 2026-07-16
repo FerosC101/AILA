@@ -12,7 +12,8 @@ import { runSimulation, simulationOptions } from "./simulate.js";
 import { diffSource, diffUrls } from "./diff.js";
 import { getVersionHistory } from "./db.js";
 import { ragQuery, buildIndex, ragStatus, loadIndexFromDb } from "./rag.js";
-import { initDb, upsertSources, dbStats, loadClauses } from "./db.js";
+import { initDb, upsertSources, dbStats, loadClauses,
+  createConversation, saveArticle, listConversations, getConversation, getArticle, priorFindings } from "./db.js";
 import { extractSource, extractorEnabled, extractAll, batchStatus, extractZone1 } from "./extract.js";
 import { analyzeDocument } from "./engine.js";
 import { processUpload } from "./upload.js";
@@ -368,13 +369,40 @@ app.post("/rag/index", async (_req, res) => {
 /** POST /rag/query — retrieve + answer with real citations. */
 app.post("/rag/query", async (req, res) => {
   if (!classifierEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
-  const { question } = req.body ?? {};
+  const { question, live } = req.body ?? {};
+  let { conversationId } = req.body ?? {};
   if (!question || typeof question !== "string") return res.status(400).json({ error: "question is required." });
   try {
-    res.json(await ragQuery(question));
+    // conversation memory: reuse prior findings from this conversation as context
+    const prior = conversationId ? await priorFindings(conversationId).catch(() => "") : "";
+    const result = await ragQuery(question, {
+      live: typeof live === "boolean" ? live : undefined,
+      priorFindings: prior || undefined,
+    });
+    // persist: create the conversation on first question, then save this answer as an article
+    if (!conversationId) conversationId = await createConversation(question);
+    const articleId = await saveArticle(conversationId, question, result);
+    res.json({ ...result, conversationId, articleId });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
+});
+
+/** GET /conversations — recent conversations with article counts. */
+app.get("/conversations", async (_req, res) => res.json(await listConversations()));
+
+/** GET /conversations/:id — a conversation with its saved article cards. */
+app.get("/conversations/:id", async (req, res) => {
+  const conv = await getConversation(req.params.id);
+  if (!conv) return res.status(404).json({ error: "Unknown conversation." });
+  res.json(conv);
+});
+
+/** GET /articles/:id — full stored answer payload for reopening. */
+app.get("/articles/:id", async (req, res) => {
+  const art = await getArticle(req.params.id);
+  if (!art) return res.status(404).json({ error: "Unknown article." });
+  res.json(art);
 });
 
 /** POST /scrape — scrape all sources, or a subset via ?region= / body.ids. */
