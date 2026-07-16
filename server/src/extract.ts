@@ -7,16 +7,23 @@ import * as cheerio from "cheerio";
 import { fetchText, fetchPdfText } from "./scraper.js";
 import { renderText, renderEnabled } from "./render.js";
 import { ensureEnglish } from "./translate.js";
-import { RDTII_CATEGORIES } from "./classify.js";
+import { RDTII_INDICATORS, isIndicatorId, findIndicator, pillarName } from "./indicators.js";
 import { findSource, loadSources } from "./sources.js";
 import { activeUrlSet, healthReady, refreshHealth } from "./scanner.js";
-import { saveClauses, type StoredClause } from "./db.js";
+import { saveClauses, upsertSources, type StoredClause } from "./db.js";
+import { recordGeminiUsage } from "./cost.js";
+import { classifyAuthority } from "./authority.js";
 import { embedTexts, loadClauseIndex } from "./rag.js";
 import type { RegulationSource } from "./types.js";
 
-const RDTII_NAMES = RDTII_CATEGORIES.map((c) => c.name);
+// Compact RDTII indicator catalog for the extraction prompt.
+const INDICATOR_CATALOG = RDTII_INDICATORS.map((i) => `${i.id} (P${i.pillarId} ${i.pillar}): ${i.focus}`).join("\n");
 const CLAUSE_TYPES = ["obligation", "restriction", "exception", "penalty", "right", "definition"];
-const MAX_INPUT = 7000;
+const MAX_INPUT = Number(process.env.EXTRACT_WINDOW_CHARS ?? 9000);     // chars per model window
+const MAX_DOC = 40_000;                                                 // max document chars pulled before windowing
+const MAX_WINDOWS = Number(process.env.EXTRACT_MAX_WINDOWS ?? 3);       // cost guard: max passes over one doc
+const WINDOW_OVERLAP = 400;                                             // chars shared between windows (avoid cutting a clause)
+const MAX_TOTAL_CLAUSES = 40;                                           // cap after merging all windows
 
 export function extractorEnabled(): boolean {
   return !!process.env.GEMINI_API_KEY;
@@ -26,16 +33,16 @@ export function extractorEnabled(): boolean {
 async function getDocText(source: RegulationSource): Promise<string> {
   let text = "";
   if (source.format === "pdf" || /\.pdf(\?|#|$)/i.test(source.url)) {
-    text = (await fetchPdfText(source.url, 25000, MAX_INPUT).catch(() => null)) ?? "";
+    text = (await fetchPdfText(source.url, 25000, MAX_DOC).catch(() => null)) ?? "";
   } else {
     const html = await fetchText(source.url, 12000);
     if (html) {
       const $ = cheerio.load(html);
       $("script, style, noscript, svg, header, footer, nav, form").remove();
-      text = ($("main").length ? $("main") : $("body")).text().replace(/\s+/g, " ").trim().slice(0, MAX_INPUT);
+      text = ($("main").length ? $("main") : $("body")).text().replace(/\s+/g, " ").trim().slice(0, MAX_DOC);
     }
     if (text.length < 300 && renderEnabled()) {
-      const rendered = await renderText(source.url, 25000, MAX_INPUT).catch(() => null);
+      const rendered = await renderText(source.url, 25000, MAX_DOC).catch(() => null);
       if (rendered && rendered.length > text.length) text = rendered;
     }
   }
@@ -43,34 +50,146 @@ async function getDocText(source: RegulationSource): Promise<string> {
   return ensureEnglish(text, source.id, source.jurisdiction);
 }
 
-interface RawClause {
-  type: string; text: string; actor?: string; rdtii?: string[];
-  penalty?: string; effectiveDate?: string; citation?: string; sourceQuote?: string; confidence?: number;
+/** Split a long document into overlapping windows so extraction covers the WHOLE law, not just the first section. */
+export function windowDocument(text: string): string[] {
+  if (text.length <= MAX_INPUT) return [text];
+  const windows: string[] = [];
+  let start = 0;
+  while (start < text.length && windows.length < MAX_WINDOWS) {
+    windows.push(text.slice(start, start + MAX_INPUT));
+    start += MAX_INPUT - WINDOW_OVERLAP;
+  }
+  return windows;
 }
 
-async function callGemini(instrument: string, jurisdiction: string, text: string): Promise<RawClause[]> {
+/** Fill missing document-level fields from later windows (first non-empty wins). */
+function mergeDoc(a: RawDoc, b: RawDoc): RawDoc {
+  return { level: a.level ?? b.level, lawNumber: a.lawNumber ?? b.lawNumber, lastAmended: a.lastAmended ?? b.lastAmended };
+}
+
+/** De-duplicate clauses by normalized text (windows overlap) and cap the total. */
+function dedupeClauses(clauses: StoredClause[]): StoredClause[] {
+  const seen = new Set<string>();
+  const out: StoredClause[] = [];
+  for (const c of clauses) {
+    const key = c.text.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+    if (out.length >= MAX_TOTAL_CLAUSES) break;
+  }
+  return out;
+}
+
+/** Run extraction across every window of a document and merge the results. */
+async function extractWindows(instrument: string, jurisdiction: string, text: string, hint?: ExtractHint): Promise<{ doc: RawDoc; raw: RawClause[] }> {
+  const windows = windowDocument(text);
+  let doc: RawDoc = {};
+  const raw: RawClause[] = [];
+  for (const w of windows) {
+    const r = await callGemini(instrument, jurisdiction, w, hint);
+    doc = mergeDoc(doc, r.doc);
+    raw.push(...r.clauses);
+    if (raw.length >= MAX_TOTAL_CLAUSES * 2) break; // plenty — stop paying for more windows
+  }
+  return { doc, raw };
+}
+
+const LEGAL_LEVELS = ["Act", "Regulation", "Amendment", "Sector Code", "Guideline", "Agreement", "Bill", "Other"];
+const SUBSTANTIVE = new Set(["obligation", "restriction", "exception", "penalty", "right"]);
+
+interface RawClause {
+  type: string; text: string; actor?: string; indicators?: string[];
+  penalty?: string; effectiveDate?: string; citation?: string; sourceQuote?: string; confidence?: number;
+  locationReference?: string; mappingRationale?: string; notes?: string;
+}
+interface RawDoc { level?: string; lawNumber?: string; lastAmended?: string }
+
+/** Optional guidance that biases extraction toward a pillar / indicator (P2-5). */
+export interface ExtractHint { pillarId?: number; indicatorId?: string }
+
+/** Build the FOCUS line injected into the prompt when a pillar/indicator hint is supplied. */
+function focusLine(hint?: ExtractHint): string {
+  if (!hint) return "";
+  if (hint.indicatorId && isIndicatorId(hint.indicatorId)) {
+    const ind = findIndicator(hint.indicatorId)!;
+    return `\nFOCUS: This document is being reviewed specifically for indicator ${ind.id} (P${ind.pillarId} ${ind.pillar}: ${ind.focus}). Prioritise clauses relevant to it, but still extract other substantive clauses.\n`;
+  }
+  if (typeof hint.pillarId === "number") {
+    const ids = RDTII_INDICATORS.filter((i) => i.pillarId === hint.pillarId).map((i) => i.id);
+    if (ids.length) return `\nFOCUS: This document is being reviewed for pillar P${hint.pillarId} (${pillarName(hint.pillarId)}). Pay special attention to clauses mapping to ${ids.join(", ")}, but still extract other substantive clauses.\n`;
+  }
+  return "";
+}
+
+/** Validate model-proposed indicator IDs against the real seed taxonomy (anti-hallucination). */
+function validateIndicators(ids: unknown): { indicators: string[]; rdtii: string[] } {
+  const valid = (Array.isArray(ids) ? ids : [])
+    .filter((id): id is string => typeof id === "string" && isIndicatorId(id));
+  const uniq = [...new Set(valid)].slice(0, 4); // multi-indicator, capped
+  return { indicators: uniq, rdtii: uniq.map((id) => findIndicator(id)!.focus) };
+}
+
+/** Build a persisted clause: validate indicators + stamp document-level + compulsory fields. */
+function toStoredClause(
+  c: RawClause,
+  meta: { sourceId: string; jurisdiction: string; instrument: string; url: string },
+  doc: RawDoc,
+): StoredClause {
+  const { indicators, rdtii } = validateIndicators(c.indicators);
+  // Discovery tag: a substantive rule that matched NO real RDTII indicator → candidate new finding
+  const discoveryTag = indicators.length === 0 && SUBSTANTIVE.has(c.type) ? "candidate — no RDTII match" : undefined;
+  return {
+    ...meta,
+    type: c.type, text: c.text.trim(), actor: c.actor || undefined,
+    indicators, rdtii,
+    level: doc.level, lawNumber: doc.lawNumber, lastAmended: doc.lastAmended,
+    locationReference: c.locationReference || undefined,
+    mappingRationale: c.mappingRationale || undefined,
+    discoveryTag,
+    notes: c.notes || undefined,
+    penalty: c.penalty || undefined,
+    effectiveDate: c.effectiveDate || undefined,
+    citation: c.citation || undefined,
+    sourceQuote: c.sourceQuote ? c.sourceQuote.slice(0, 240) : undefined,
+    confidence: typeof c.confidence === "number" ? c.confidence : undefined,
+  };
+}
+
+async function callGemini(instrument: string, jurisdiction: string, text: string, hint?: ExtractHint): Promise<{ doc: RawDoc; clauses: RawClause[] }> {
   const key = process.env.GEMINI_API_KEY!;
   const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
   const prompt = `You are a legal-data extraction engine for digital-trade & data-governance law.
-From the DOCUMENT, extract the most important regulatory clauses as structured atoms (max 12).
-For each clause:
+
+First describe the DOCUMENT as a whole ("document"):
+- "level": the legal hierarchy — one of ${JSON.stringify(LEGAL_LEVELS)}
+- "lawNumber": the act/decree/law number if present (e.g. "Act 709", "R.A. 10173"), else null
+- "lastAmended": when the instrument was LAST amended if stated (not when it started), else null
+
+Then extract the most important regulatory clauses as structured atoms (max 12). For each clause:
 - "type": one of ${JSON.stringify(CLAUSE_TYPES)}
 - "text": the rule in plain, precise terms (one sentence)
 - "actor": who it binds (e.g. data controller, processor, individual, government) or null
-- "rdtii": 1-2 categories, ONLY from ${JSON.stringify(RDTII_NAMES)}
+- "indicators": 1-3 UN ESCAP RDTII indicator IDs this clause maps to (a clause may map to several — NOT mutually exclusive). Use ONLY IDs from the CATALOG below (verbatim, e.g. "P7-I2"). If none genuinely apply, use [].
+- "citation": the section/article number (e.g. "Section 13"), else null
+- "locationReference": a more precise location than the section — e.g. "Part II, paragraph 3(a)" or page — distinct from citation, else null
+- "mappingRationale": one short sentence explaining WHY those indicators were assigned, else null
 - "penalty": the sanction if stated, else null
 - "effectiveDate": if stated, else null
-- "citation": the section/article/paragraph reference if present (e.g. "Section 13"), else null
-- "sourceQuote": a SHORT verbatim quote (<=200 chars) from the document that supports this clause
+- "sourceQuote": a SHORT verbatim quote (<=200 chars) from the document supporting this clause
+- "notes": a brief analyst note if useful (e.g. ambiguity, cross-reference), else null
 - "confidence": 0-1
 
-Only extract clauses actually grounded in the DOCUMENT text. Do not invent. If the text is navigation/boilerplate with no legal content, return [].
+Only extract clauses actually grounded in the DOCUMENT text. Do not invent. If boilerplate/navigation, return an empty clauses list.
 
+RDTII INDICATOR CATALOG (id (Pillar): focus):
+${INDICATOR_CATALOG}
+${focusLine(hint)}
 INSTRUMENT: ${instrument} (${jurisdiction})
 DOCUMENT:
 ${text.slice(0, MAX_INPUT)}
 
-Return ONLY JSON: {"clauses":[ ... ]}`;
+Return ONLY JSON: {"document":{...},"clauses":[ ... ]}`;
 
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
     method: "POST",
@@ -79,14 +198,21 @@ Return ONLY JSON: {"clauses":[ ... ]}`;
   });
   if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data: any = await res.json();
+  recordGeminiUsage(model, data);
   const raw: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
   let parsed: any = {};
-  try { parsed = JSON.parse(raw); } catch { return []; }
-  return Array.isArray(parsed.clauses) ? parsed.clauses : [];
+  try { parsed = JSON.parse(raw); } catch { return { doc: {}, clauses: [] }; }
+  const d = parsed.document ?? {};
+  const doc: RawDoc = {
+    level: LEGAL_LEVELS.includes(d.level) ? d.level : undefined,
+    lawNumber: typeof d.lawNumber === "string" ? d.lawNumber : undefined,
+    lastAmended: typeof d.lastAmended === "string" ? d.lastAmended : undefined,
+  };
+  return { doc, clauses: Array.isArray(parsed.clauses) ? parsed.clauses : [] };
 }
 
 /** Extract clauses for one source, validate, persist, and return them. */
-export async function extractSource(sourceId: string, opts: { refresh?: boolean } = {}): Promise<{ sourceId: string; instrument: string; jurisdiction: string; count: number; clauses: StoredClause[] }> {
+export async function extractSource(sourceId: string, opts: { refresh?: boolean; hint?: ExtractHint } = {}): Promise<{ sourceId: string; instrument: string; jurisdiction: string; count: number; clauses: StoredClause[] }> {
   const source = findSource(sourceId);
   if (!source) throw new Error(`Unknown source: ${sourceId}`);
   if (!extractorEnabled()) throw new Error("GEMINI_API_KEY not configured.");
@@ -97,21 +223,13 @@ export async function extractSource(sourceId: string, opts: { refresh?: boolean 
     return { sourceId, instrument: source.instrument, jurisdiction: source.jurisdiction, count: 0, clauses: [] };
   }
 
-  const raw = await callGemini(source.instrument, source.jurisdiction, text);
-  const clauses: StoredClause[] = raw
-    .filter((c) => c && typeof c.text === "string" && CLAUSE_TYPES.includes(c.type))
-    .slice(0, 12)
-    .map((c) => ({
-      sourceId, jurisdiction: source.jurisdiction, instrument: source.instrument, url: source.url,
-      type: c.type, text: c.text.trim(),
-      actor: c.actor || undefined,
-      rdtii: (c.rdtii ?? []).filter((n) => RDTII_NAMES.includes(n)),
-      penalty: c.penalty || undefined,
-      effectiveDate: c.effectiveDate || undefined,
-      citation: c.citation || undefined,
-      sourceQuote: c.sourceQuote ? c.sourceQuote.slice(0, 240) : undefined,
-      confidence: typeof c.confidence === "number" ? c.confidence : undefined,
-    }));
+  const { doc, raw } = await extractWindows(source.instrument, source.jurisdiction, text, opts.hint);
+  const meta = { sourceId, jurisdiction: source.jurisdiction, instrument: source.instrument, url: source.url };
+  const clauses: StoredClause[] = dedupeClauses(
+    raw
+      .filter((c) => c && typeof c.text === "string" && CLAUSE_TYPES.includes(c.type))
+      .map((c) => toStoredClause(c, meta, doc)),
+  );
 
   // embed each clause so it becomes a high-precision retrieval unit for RAG
   if (clauses.length) {
@@ -126,23 +244,16 @@ export async function extractSource(sourceId: string, opts: { refresh?: boolean 
 
 /** Extract + embed + persist clauses from raw text (used for uploaded documents). */
 export async function extractFromText(
-  id: string, instrument: string, jurisdiction: string, url: string, text: string,
+  id: string, instrument: string, jurisdiction: string, url: string, text: string, hint?: ExtractHint,
 ): Promise<StoredClause[]> {
   if (!extractorEnabled()) throw new Error("GEMINI_API_KEY not configured.");
   if (!text || text.length < 120) return [];
-  const raw = await callGemini(instrument, jurisdiction, text);
-  const clauses: StoredClause[] = raw
-    .filter((c) => c && typeof c.text === "string" && CLAUSE_TYPES.includes(c.type))
-    .slice(0, 12)
-    .map((c) => ({
-      sourceId: id, jurisdiction, instrument, url,
-      type: c.type, text: c.text.trim(), actor: c.actor || undefined,
-      rdtii: (c.rdtii ?? []).filter((n) => RDTII_NAMES.includes(n)),
-      penalty: c.penalty || undefined, effectiveDate: c.effectiveDate || undefined,
-      citation: c.citation || undefined,
-      sourceQuote: c.sourceQuote ? c.sourceQuote.slice(0, 240) : undefined,
-      confidence: typeof c.confidence === "number" ? c.confidence : undefined,
-    }));
+  const { doc, raw } = await extractWindows(instrument, jurisdiction, text.slice(0, MAX_DOC), hint);
+  const clauses: StoredClause[] = dedupeClauses(
+    raw
+      .filter((c) => c && typeof c.text === "string" && CLAUSE_TYPES.includes(c.type))
+      .map((c) => toStoredClause(c, { sourceId: id, jurisdiction, instrument, url }, doc)),
+  );
   if (clauses.length) {
     const embs = await embedTexts(clauses.map((c) => `${c.instrument}. ${c.text}`)).catch(() => [] as number[][]);
     clauses.forEach((c, i) => { if (embs[i]?.length) c.embedding = embs[i]; });
@@ -150,6 +261,40 @@ export async function extractFromText(
   await saveClauses(id, clauses);
   await loadClauseIndex().catch(() => {});
   return clauses;
+}
+
+/**
+ * Zone-1 input (P2-4): analyse an economy NOT in the surveyed corpus from a
+ * user-supplied seed URL. Fetches + (optionally) translates the document, runs
+ * pillar/indicator-hinted extraction, and persists the clauses under an ad-hoc id.
+ */
+export async function extractZone1(
+  economy: string,
+  url: string,
+  opts: { instrument?: string; indicatorId?: string; pillarId?: number } = {},
+): Promise<{ id: string; economy: string; instrument: string; url: string; authority: ReturnType<typeof classifyAuthority>; count: number; clauses: StoredClause[]; note?: string }> {
+  if (!extractorEnabled()) throw new Error("GEMINI_API_KEY not configured.");
+  let host = ""; try { host = new URL(url).hostname; } catch { throw new Error("Invalid seed URL."); }
+
+  const id = `zone1-${economy.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${Date.now().toString(36)}`;
+  const instrument = opts.instrument || `${economy} — ${host}`;
+  const source: RegulationSource = {
+    id, jurisdiction: economy, instrument, url,
+    region: "Zone-1", format: /\.pdf(\?|#|$)/i.test(url) ? "pdf" : "html", cadence: "monthly",
+  };
+  const authority = classifyAuthority(url);
+  const text = await getDocText(source);
+  if (!text || text.length < 200) {
+    return { id, economy, instrument, url, authority, count: 0, clauses: [], note: "Could not extract enough text from the seed URL (may be JS-rendered, blocked, or empty)." };
+  }
+  // Register the ad-hoc source so the clauses FK is satisfied. sources.url is UNIQUE
+  // and this URL may already be surveyed (or re-submitted), so anchor the registry row
+  // to the unique run id; the clauses themselves keep the real url.
+  await upsertSources([{ ...source, url: `${url}#z1=${id}` }]);
+  const hint: ExtractHint | undefined =
+    opts.indicatorId ? { indicatorId: opts.indicatorId } : (opts.pillarId != null ? { pillarId: opts.pillarId } : undefined);
+  const clauses = await extractFromText(id, instrument, economy, url, text, hint);
+  return { id, economy, instrument, url, authority, count: clauses.length, clauses };
 }
 
 // ── batch extraction across the whole active corpus ───────────────────────────

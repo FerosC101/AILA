@@ -3,6 +3,7 @@
 
 import { loadPolicies } from "./sources.js";
 import { classifierEnabled } from "./classify.js";
+import { recordGeminiUsage } from "./cost.js";
 
 export interface SimScenario {
   businessType?: string;
@@ -181,6 +182,7 @@ ${facts}`;
   });
   if (!res.ok) return undefined;
   const data: any = await res.json();
+  recordGeminiUsage(model, data);
   return data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 }
 

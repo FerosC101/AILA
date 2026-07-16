@@ -51,4 +51,8 @@ export interface ScrapeResult {
   excerpt?: string;
   documentLinks?: string[];
   error?: string;
+  /** Set when content was recovered from the Internet Archive after the original 404'd. */
+  archived?: { url: string; timestamp: string };
+  /** Whether the source URL is an official (primary) publisher or a secondary source. */
+  authority?: { official: boolean; tier: "primary" | "secondary"; domainType: string; reason: string };
 }

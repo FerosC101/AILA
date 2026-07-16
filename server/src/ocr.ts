@@ -23,32 +23,55 @@ const MAX_PAGES     = 5;     // max pages to rasterize + OCR per PDF
 const OCR_CACHE_KEY = "ocr"; // key in translations table
 const SCALE         = 2.0;   // render scale — 2x improves Tesseract accuracy
 
-// ── FIX 3: persistent worker ──────────────────────────────────────────────────
-// One worker stays alive for the entire server lifetime instead of paying
-// the ~2s createWorker startup cost (subprocess spawn + WASM load) on every job.
+// ── multilingual language resolution ───────────────────────────────────────────
+// ISO 639-1 (from translate.ts detection) → Tesseract traineddata code.
+const TESS_LANG: Record<string, string> = { th: "tha", id: "ind", vi: "vie", zh: "chi_sim", ms: "msa", en: "eng" };
+// Jurisdiction → likely language (mirrors translate.ts JURISDICTION_LANG).
+const JURISDICTION_LANG: Record<string, string> = { Thailand: "th", Indonesia: "id", Vietnam: "vi", China: "zh", Malaysia: "ms" };
 
-let _worker: Worker | null = null;
-let _workerReady = false;
+export interface OcrLangHint { lang?: string; jurisdiction?: string }
 
-async function getWorker(): Promise<Worker> {
-  if (_worker && _workerReady) return _worker;
-  console.log("[OCR] Initialising persistent Tesseract worker...");
-  _worker = await createWorker("eng", 1, { logger: () => {}, errorHandler: () => {} });
-  _workerReady = true;
-  console.log("[OCR] Persistent Tesseract worker ready");
-  return _worker;
+/**
+ * Resolve the Tesseract language string for a job. Non-English languages are
+ * combined with `eng` (e.g. "tha+eng") so bilingual gov documents still read
+ * their English portions. `lang` (a detected ISO code) wins over `jurisdiction`.
+ */
+export function tesseractLangFor(hint: OcrLangHint = {}): string {
+  const iso = hint.lang || (hint.jurisdiction ? JURISDICTION_LANG[hint.jurisdiction] : undefined) || "en";
+  const tess = TESS_LANG[iso] ?? "eng";
+  return tess === "eng" ? "eng" : `${tess}+eng`;
 }
 
-async function shutdownWorker(): Promise<void> {
-  if (_worker && _workerReady) {
-    _workerReady = false;
-    await _worker.terminate().catch(() => {});
-    _worker = null;
+// ── persistent workers (one per language) ──────────────────────────────────────
+// Workers stay alive for the server lifetime to avoid the ~2s createWorker
+// startup cost. Keyed by the traineddata string (e.g. "eng", "tha+eng").
+
+const _workers = new Map<string, Worker>();
+
+async function getWorker(lang = "eng"): Promise<Worker> {
+  const existing = _workers.get(lang);
+  if (existing) return existing;
+  console.log(`[OCR] Initialising Tesseract worker (${lang})...`);
+  try {
+    const worker = await createWorker(lang, 1, { logger: () => {}, errorHandler: () => {} });
+    _workers.set(lang, worker);
+    console.log(`[OCR] Worker ready (${lang})`);
+    return worker;
+  } catch (err) {
+    // traineddata download can fail (offline / unsupported lang) → fall back to English
+    console.warn(`[OCR] Worker "${lang}" failed (${err instanceof Error ? err.message : err}); falling back to eng`);
+    if (lang !== "eng") return getWorker("eng");
+    throw err;
   }
 }
-process.on("exit",    () => { shutdownWorker(); });
-process.on("SIGINT",  () => { shutdownWorker().then(() => process.exit(0)); });
-process.on("SIGTERM", () => { shutdownWorker().then(() => process.exit(0)); });
+
+async function shutdownWorkers(): Promise<void> {
+  for (const worker of _workers.values()) await worker.terminate().catch(() => {});
+  _workers.clear();
+}
+process.on("exit",    () => { shutdownWorkers(); });
+process.on("SIGINT",  () => { shutdownWorkers().then(() => process.exit(0)); });
+process.on("SIGTERM", () => { shutdownWorkers().then(() => process.exit(0)); });
 
 // ── simple async queue ────────────────────────────────────────────────────────
 type OcrJob = () => Promise<void>;
@@ -120,6 +143,7 @@ async function runTesseract(
   pdfBuffer: Uint8Array,
   sourceId: string,
   maxChars: number,
+  lang = "eng",
 ): Promise<string | null> {
   const pngPages = await rasterizePages(pdfBuffer);
 
@@ -128,7 +152,7 @@ async function runTesseract(
     return null;
   }
 
-  const worker = await getWorker();
+  let worker = await getWorker(lang);
   const pageTexts: string[] = [];
 
   for (let i = 0; i < pngPages.length; i++) {
@@ -137,17 +161,17 @@ async function runTesseract(
       const t = data.text.replace(/\s+/g, " ").trim();
       if (t.length > 20) pageTexts.push(t);
     } catch (err) {
-      console.warn(`[OCR] Page ${i + 1} recognition failed for ${sourceId}:`, err instanceof Error ? err.message : err);
-      // Worker may be corrupted — force recreation on next job
-      _workerReady = false;
-      _worker = null;
+      console.warn(`[OCR] Page ${i + 1} recognition failed for ${sourceId} (${lang}):`, err instanceof Error ? err.message : err);
+      // Worker may be corrupted — drop it so the next page/job recreates it
+      _workers.delete(lang);
+      worker = await getWorker(lang);
     }
   }
 
   if (!pageTexts.length) return null;
 
   const result = pageTexts.join(" ").replace(/\s+/g, " ").trim();
-  console.log(`[OCR] Extracted ${result.length} chars across ${pngPages.length} page(s) for ${sourceId}`);
+  console.log(`[OCR] Extracted ${result.length} chars across ${pngPages.length} page(s) for ${sourceId} (${lang})`);
   await saveTranslation(sourceId, OCR_CACHE_KEY, result);
   return result.slice(0, maxChars);
 }
@@ -158,7 +182,9 @@ export async function ocrPdf(
   pdfBuffer: Uint8Array,
   sourceId: string,
   maxChars = 12_000,
+  hint: OcrLangHint = {},
 ): Promise<string | null> {
+  const lang = tesseractLangFor(hint);
 
   // 1. Cache check
   const cached = await getCachedTranslation(sourceId, OCR_CACHE_KEY);
@@ -181,12 +207,12 @@ export async function ocrPdf(
     }
   } catch { /* fall through */ }
 
-  // 3. Slow path: rasterize pages then Tesseract
-  console.log(`[OCR] Queuing rasterize+OCR for ${sourceId} (queue: ${ocrQueue.pending})`);
+  // 3. Slow path: rasterize pages then Tesseract (in the resolved language)
+  console.log(`[OCR] Queuing rasterize+OCR for ${sourceId} (lang: ${lang}, queue: ${ocrQueue.pending})`);
 
   return new Promise((resolve) => {
     ocrQueue.add(async () => {
-      const result = await runTesseract(pdfBuffer, sourceId, maxChars).catch((err) => {
+      const result = await runTesseract(pdfBuffer, sourceId, maxChars, lang).catch((err) => {
         console.error(`[OCR] runTesseract failed for ${sourceId}:`, err instanceof Error ? err.message : err);
         return null;
       });
@@ -196,18 +222,19 @@ export async function ocrPdf(
 }
 
 /** OCR an image buffer (png/jpg/tiff) directly — for uploaded image documents. */
-export async function ocrImage(imageBuffer: Uint8Array, id: string, maxChars = 12_000): Promise<string | null> {
+export async function ocrImage(imageBuffer: Uint8Array, id: string, maxChars = 12_000, hint: OcrLangHint = {}): Promise<string | null> {
+  const lang = tesseractLangFor(hint);
   return new Promise((resolve) => {
     ocrQueue.add(async () => {
       try {
-        const worker = await getWorker();
+        const worker = await getWorker(lang);
         const { data } = await worker.recognize(Buffer.from(imageBuffer));
         const text = data.text.replace(/\s+/g, " ").trim();
         console.log(`[OCR] Image ${id}: ${text.length} chars`);
         resolve(text.length > 10 ? text.slice(0, maxChars) : null);
       } catch (err) {
         console.error(`[OCR] Image OCR failed for ${id}:`, err instanceof Error ? err.message : err);
-        _workerReady = false; _worker = null;
+        _workers.delete(lang);
         resolve(null);
       }
     });
@@ -230,6 +257,8 @@ export function ocrStatus() {
   return {
     pending: ocrQueue.pending,
     engine: "tesseract.js",
-    worker: _workerReady ? "ready" : "idle",
+    languages: Object.keys(TESS_LANG),        // supported OCR languages
+    workers: [..._workers.keys()],            // currently-loaded language workers
+    worker: _workers.size ? "ready" : "idle",
   };
 }

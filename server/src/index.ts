@@ -13,9 +13,12 @@ import { diffSource, diffUrls } from "./diff.js";
 import { getVersionHistory } from "./db.js";
 import { ragQuery, buildIndex, ragStatus, loadIndexFromDb } from "./rag.js";
 import { initDb, upsertSources, dbStats, loadClauses } from "./db.js";
-import { extractSource, extractorEnabled, extractAll, batchStatus } from "./extract.js";
+import { extractSource, extractorEnabled, extractAll, batchStatus, extractZone1 } from "./extract.js";
 import { analyzeDocument } from "./engine.js";
 import { processUpload } from "./upload.js";
+import { clausesCsv } from "./export.js";
+import { costStatus } from "./cost.js";
+import { classifyAuthority } from "./authority.js";
 import multer from "multer";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -74,8 +77,9 @@ app.get("/health", async (_req, res) => {
 
 /** GET /sources — de-duplicated crawl targets parsed from the markdown lists. */
 app.get("/sources", (_req, res) => {
-  const sources = loadSources();
-  res.json({ count: sources.length, sources });
+  const sources = loadSources().map((s) => ({ ...s, authority: classifyAuthority(s.url) }));
+  const primary = sources.filter((s) => s.authority.tier === "primary").length;
+  res.json({ count: sources.length, primary, secondary: sources.length - primary, sources });
 });
 
 /**
@@ -242,11 +246,42 @@ app.post("/extract", async (req, res) => {
   }
 });
 
+/**
+ * POST /zone1 — analyse a non-surveyed economy from a user-supplied seed URL.
+ * Body: { economy, url, instrument?, indicatorId?, pillarId? }.
+ */
+app.post("/zone1", async (req, res) => {
+  if (!extractorEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  const { economy, url, instrument, indicatorId, pillarId } = req.body ?? {};
+  if (!economy || !url) return res.status(400).json({ error: "Body must include { economy, url }." });
+  try {
+    res.json(await extractZone1(String(economy), String(url), {
+      instrument: instrument ? String(instrument) : undefined,
+      indicatorId: indicatorId ? String(indicatorId) : undefined,
+      pillarId: pillarId != null ? Number(pillarId) : undefined,
+    }));
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 /** GET /clauses — query extracted clauses (?jurisdiction= ?type= ?sourceId=). */
 app.get("/clauses", async (req, res) => {
   const q = (k: string) => req.query[k] as string | undefined;
   res.json(await loadClauses({ jurisdiction: q("jurisdiction"), type: q("type"), sourceId: q("sourceId"), limit: 500 }));
 });
+
+/** GET /export/clauses.csv — extracted clauses in the compulsory-field CSV structure. */
+app.get("/export/clauses.csv", async (req, res) => {
+  const q = (k: string) => req.query[k] as string | undefined;
+  const csv = await clausesCsv({ jurisdiction: q("jurisdiction"), type: q("type"), sourceId: q("sourceId") });
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="aila-clauses-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send("﻿" + csv); // BOM so Excel reads UTF-8 correctly
+});
+
+/** GET /cost — estimated Gemini token spend (per model + total). */
+app.get("/cost", (_req, res) => res.json(costStatus()));
 
 // =============================================================================
 // Semantic version control & diff ("GitHub for regulations")

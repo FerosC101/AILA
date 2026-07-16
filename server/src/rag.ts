@@ -9,6 +9,7 @@ import { loadSources } from "./sources.js";
 import { activeUrlSet, healthReady, refreshHealth } from "./scanner.js";
 import { saveChunks, loadAllChunks, getSourceEmbeddedAt, loadClauseEmbeddings, type StoredClause } from "./db.js";
 import { ensureEnglish } from "./translate.js";
+import { recordGeminiUsage } from "./cost.js";
 
 
 
@@ -92,6 +93,7 @@ async function embedOne(text: string): Promise<number[]> {
   );
   if (!res.ok) throw new Error(`Embeddings ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data: any = await res.json();
+  recordGeminiUsage(EMBED_MODEL, data);
   return (data?.embedding?.values as number[]) ?? [];
 }
 
@@ -321,6 +323,7 @@ ${context}`;
   );
   if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data: any = await res.json();
+  recordGeminiUsage(GEN_MODEL(), data);
   const text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
   let parsed: any = {};
   try { parsed = JSON.parse(text); } catch { parsed = { summary: text, confidence: 0.4, citations: [] }; }

@@ -136,6 +136,12 @@ export async function initDb(): Promise<void> {
 
   // migration: clause embeddings (older DBs created the table without it)
   try { await db.execute("ALTER TABLE clauses ADD COLUMN embedding TEXT"); } catch { /* already exists */ }
+  // migration: real RDTII indicator IDs (P#-I#) per clause
+  try { await db.execute("ALTER TABLE clauses ADD COLUMN indicators TEXT"); } catch { /* already exists */ }
+  // migration: compulsory output fields (UN ESCAP output guide)
+  for (const col of ["level", "law_number", "last_amended", "location_reference", "mapping_rationale", "discovery_tag", "notes"]) {
+    try { await db.execute(`ALTER TABLE clauses ADD COLUMN ${col} TEXT`); } catch { /* already exists */ }
+  }
 }
 
 // ── Versions (semantic version control) ────────────────────────────────────────
@@ -439,14 +445,26 @@ export interface StoredClause {
   type: string;
   text: string;
   actor?: string;
-  rdtii?: string[];
+  indicators?: string[];      // OFFICIAL RDTII indicator IDs (P#-I#) — multi-indicator
+  rdtii?: string[];           // the focus label for each indicator (display / back-compat)
+  level?: string;            // legal hierarchy: Act | Regulation | Amendment | Sector Code | ...
+  lawNumber?: string;        // act/decree number (e.g. "Act 709", "R.A. 10173")
+  lastAmended?: string;      // when last changed (distinct from effectiveDate = when it started)
+  locationReference?: string;// precise location (part/paragraph/page), distinct from citation
+  mappingRationale?: string; // why these indicators were assigned (persisted)
+  discoveryTag?: string;     // flag for a substantive clause with no RDTII match ("new discovery")
+  notes?: string;            // per-clause analyst note
   penalty?: string;
   effectiveDate?: string;
   citation?: string;
   sourceQuote?: string;
   confidence?: number;
+  reviewNeeded?: boolean;    // derived: confidence below REVIEW_THRESHOLD → flag for human review
   embedding?: number[];
 }
+
+/** Clauses at/under this confidence are auto-flagged for human review. */
+export const REVIEW_THRESHOLD = Number(process.env.REVIEW_THRESHOLD ?? 0.8);
 
 /** Replace all clauses for a source (idempotent re-extraction). */
 export async function saveClauses(sourceId: string, clauses: StoredClause[]): Promise<void> {
@@ -454,13 +472,16 @@ export async function saveClauses(sourceId: string, clauses: StoredClause[]): Pr
     { sql: "DELETE FROM clauses WHERE source_id = ?", args: [sourceId] },
     ...clauses.map((c) => ({
       sql: `INSERT INTO clauses
-        (source_id, jurisdiction, instrument, url, type, text, actor, rdtii, penalty, effective_date, citation, source_quote, confidence, embedding)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (source_id, jurisdiction, instrument, url, type, text, actor, indicators, rdtii, penalty, effective_date, citation, source_quote, confidence, embedding,
+         level, law_number, last_amended, location_reference, mapping_rationale, discovery_tag, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         sourceId, c.jurisdiction, c.instrument, c.url, c.type, c.text,
-        c.actor ?? null, JSON.stringify(c.rdtii ?? []), c.penalty ?? null,
+        c.actor ?? null, JSON.stringify(c.indicators ?? []), JSON.stringify(c.rdtii ?? []), c.penalty ?? null,
         c.effectiveDate ?? null, c.citation ?? null, c.sourceQuote ?? null, c.confidence ?? null,
         c.embedding && c.embedding.length ? encodeEmbedding(c.embedding) : null,
+        c.level ?? null, c.lawNumber ?? null, c.lastAmended ?? null, c.locationReference ?? null,
+        c.mappingRationale ?? null, c.discoveryTag ?? null, c.notes ?? null,
       ],
     })),
   ];
@@ -477,10 +498,17 @@ function hydrateClause(row: any): StoredClause {
   return {
     id: Number(row.id), sourceId: row.source_id, jurisdiction: row.jurisdiction,
     instrument: row.instrument, url: row.url, type: row.type, text: row.text,
-    actor: row.actor ?? undefined, rdtii: row.rdtii ? JSON.parse(row.rdtii) : [],
+    actor: row.actor ?? undefined,
+    indicators: row.indicators ? JSON.parse(row.indicators) : [],
+    rdtii: row.rdtii ? JSON.parse(row.rdtii) : [],
+    level: row.level ?? undefined, lawNumber: row.law_number ?? undefined,
+    lastAmended: row.last_amended ?? undefined, locationReference: row.location_reference ?? undefined,
+    mappingRationale: row.mapping_rationale ?? undefined, discoveryTag: row.discovery_tag ?? undefined,
+    notes: row.notes ?? undefined,
     penalty: row.penalty ?? undefined, effectiveDate: row.effective_date ?? undefined,
     citation: row.citation ?? undefined, sourceQuote: row.source_quote ?? undefined,
     confidence: row.confidence ?? undefined,
+    reviewNeeded: row.confidence != null && Number(row.confidence) < REVIEW_THRESHOLD,
   };
 }
 

@@ -19,6 +19,7 @@
  */
 
 import { getCachedTranslation, saveTranslation } from "./db.js";
+import { recordGeminiUsage } from "./cost.js";
 
 // ── config ────────────────────────────────────────────────────────────────────
 
@@ -139,6 +140,7 @@ English translation:`;
     }
 
     const data: any = await res.json();
+    recordGeminiUsage(model, data);
     const translated = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
     return translated ?? null;
 

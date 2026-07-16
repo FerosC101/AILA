@@ -1,0 +1,11 @@
+{
+  "_note": "Curated STARTER gold set for clause-extraction accuracy (P2-8). Indicator labels are the RDTII IDs a domain expert would expect for each instrument, anchored to the seed's Pillar/Policy-Focus where available. Expand/annotate with a second labeller to make inter-annotator agreement meaningful.",
+  "docs": [
+    { "sourceId": "australia--data-availability-and-transparency-act-2022", "instrument": "Data Availability and Transparency Act 2022", "jurisdiction": "Australia", "indicators": ["P6-I4", "P7-I1"], "level": "Act" },
+    { "sourceId": "australia--australian-security-intelligence-organisation-act-1979", "instrument": "ASIO Act 1979", "jurisdiction": "Australia", "indicators": ["P7-I5"], "level": "Act" },
+    { "sourceId": "singapore--personal-data-protection-act-pdpa", "instrument": "Personal Data Protection Act (PDPA)", "jurisdiction": "Singapore", "indicators": ["P7-I1", "P6-I4"], "level": "Act" },
+    { "sourceId": "malaysia--personal-data-protection-act-2010", "instrument": "Personal Data Protection Act 2010", "jurisdiction": "Malaysia", "indicators": ["P7-I1", "P6-I1"], "level": "Act" },
+    { "sourceId": "australia--my-health-records-act-2012", "instrument": "My Health Records Act 2012", "jurisdiction": "Australia", "indicators": ["P7-I1", "P7-I5"], "level": "Act" },
+    { "sourceId": "malaysia--cyber-security-act-act-854-2024", "instrument": "Cyber Security Act 2024", "jurisdiction": "Malaysia", "indicators": ["P7-I2"], "level": "Act" }
+  ]
+}

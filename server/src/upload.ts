@@ -8,10 +8,10 @@ import { randomUUID } from "node:crypto";
 import { ocrPdf, ocrImage } from "./ocr.js";
 import { ensureEnglish, detectLanguage } from "./translate.js";
 import { extractFromText } from "./extract.js";
-import { classifyInstrument, classifierEnabled, RDTII_CATEGORIES } from "./classify.js";
+import { classifyInstrument, classifierEnabled } from "./classify.js";
+import { findIndicator } from "./indicators.js";
 import { upsertSources } from "./db.js";
 
-const codeFor = (name: string) => RDTII_CATEGORIES.find((c) => c.name === name)?.code;
 
 export interface UploadResult {
   engine: string;
@@ -59,8 +59,8 @@ export async function processUpload(
   let text: string | null = null;
   let method = "text";
   const sourceType: UploadResult["document"]["sourceType"] = isImage ? "scanned-image" : isPdf ? "pdf" : "text";
-  if (isPdf) { text = await ocrPdf(new Uint8Array(buf), id); method = "pdf (unpdf → OCR fallback)"; }
-  else if (isImage) { text = await ocrImage(new Uint8Array(buf), id); method = "OCR (tesseract)"; }
+  if (isPdf) { text = await ocrPdf(new Uint8Array(buf), id, 12_000, { jurisdiction }); method = "pdf (unpdf → OCR fallback)"; }
+  else if (isImage) { text = await ocrImage(new Uint8Array(buf), id, 12_000, { jurisdiction }); method = "OCR (tesseract)"; }
   else { text = buf.toString("utf-8").slice(0, 20000); method = "plain text"; }
   const ingestMs = Date.now() - t;
 
@@ -103,13 +103,13 @@ export async function processUpload(
     pipeline: {
       ingest: { method, chars: text.length, ms: ingestMs },
       extraction: { clauseCount: clauses.length, ms: extractionMs },
-      mapping: { rdtii: cls.rdtii ?? [], pillars: cls.pillars ?? [], policyFocus: cls.policyFocus ?? [], ms: mappingMs },
+      mapping: { rdtii: cls.rdtii ?? [], pillars: cls.pillars ?? [], policyFocus: (cls.indicators ?? []).map((i) => i.focus), ms: mappingMs },
       categorization: { coverage: cls.coverage, rationale: cls.rationale },
     },
     clauses: clauses.map((c, i) => ({
       id: `${id}#${i + 1}`, type: c.type, text: c.text, actor: c.actor,
       citation: c.citation, snippet: c.sourceQuote,
-      indicators: (c.rdtii ?? []).map((name) => ({ code: codeFor(name), name })),
+      indicators: (c.indicators ?? []).map((id) => ({ code: id, name: findIndicator(id)?.focus ?? id })),
       penalty: c.penalty, effectiveDate: c.effectiveDate, confidence: c.confidence,
     })),
   };

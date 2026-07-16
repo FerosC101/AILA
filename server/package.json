@@ -9,6 +9,7 @@
     "start": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "eval": "tsx eval/run-eval.ts",
+    "eval:extract": "tsx eval/run-extract-eval.ts",
     "sources": "tsx -e \"import('./src/sources.js').then(m => console.log(JSON.stringify(m.loadSources(), null, 2)))\""
   },
   "dependencies": {

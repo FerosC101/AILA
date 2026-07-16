@@ -10,6 +10,7 @@ import {
   Link,
   FileText, Scale,
   Heart, Share2, ChevronLeft, Eye, MessageCircle,
+  Download,
 } from "lucide-react";
 
 // ==================== TYPES ====================
@@ -1152,9 +1153,19 @@ function IntelPanels({ simulatedEvent }: { simulatedEvent: LiveEvent | null }) {
   </>;
 }
 
+// Lightweight client mirror of server/src/authority.ts — primary (official) vs secondary source.
+function sourceTier(url?:string):"primary"|"secondary"|null {
+  if(!url) return null;
+  let host=""; try{ host=new URL(url).hostname.toLowerCase().replace(/^www\./,""); }catch{ return null; }
+  if(!host||host.includes("archive.org")) return host?"secondary":null;
+  if(/(^|\.)gov(\.[a-z]{2})?$|(^|\.)go\.[a-z]{2}$|(^|\.)gob\.[a-z]{2}$|(^|\.)gouv\.[a-z]{2}$|(^|\.)gc\.ca$|(^|\.)govt\.nz$|(^|\.)mil(\.[a-z]{2})?$/.test(host)) return "primary";
+  if(/(^|\.)int$|(^|\.)europa\.eu$|(^|\.)un\.org$/.test(host)||["wto.org","wipo.int","oecd.org","asean.org","apec.org","worldbank.org","imf.org"].includes(host)) return "primary";
+  return "secondary";
+}
+
 // ==================== INTELLIGENCE DRAWER ====================
 type AIClass = { rdtii?:Array<{code:string;name:string}>; pillars:string[]; policyFocus:string[]; coverage:string; rationale:string; model:string };
-type Clause = { type:string; text:string; actor?:string; rdtii?:string[]; penalty?:string; effectiveDate?:string; citation?:string; sourceQuote?:string; confidence?:number };
+type Clause = { type:string; text:string; actor?:string; indicators?:string[]; rdtii?:string[]; level?:string; lawNumber?:string; lastAmended?:string; locationReference?:string; mappingRationale?:string; discoveryTag?:string; notes?:string; penalty?:string; effectiveDate?:string; citation?:string; sourceQuote?:string; confidence?:number; reviewNeeded?:boolean };
 function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>void;side?:"right"|"left"}) {
   const details=node.details;
   const isC=node.type==="country";
@@ -1349,9 +1360,9 @@ function IntelligenceDrawer({node,onClose,side="right"}:{node:GNode;onClose:()=>
                           {c.sourceQuote&&(
                             <p className="text-xs leading-snug pl-2" style={{color:"#64748B",fontFamily:"Georgia, serif",fontStyle:"italic",borderLeft:"2px solid #E5E9F0"}}>&ldquo;{c.sourceQuote}&rdquo;</p>
                           )}
-                          {(c.rdtii&&c.rdtii.length||c.penalty)&&(
+                          {((c.indicators&&c.indicators.length)||c.penalty)&&(
                             <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                              {(c.rdtii||[]).map(t=>(<span key={t} className="text-xs px-1.5 py-0.5 rounded-full" style={{background:h2r(NAVY,0.07),color:NAVY}}>{t}</span>))}
+                              {(c.indicators||[]).map((id,k)=>(<span key={id} className="text-xs px-1.5 py-0.5 rounded-full inline-flex items-center gap-1" style={{background:h2r(NAVY,0.1),color:NAVY,border:`1px solid ${h2r(NAVY,0.22)}`}}><span style={{fontFamily:"JetBrains Mono, monospace",fontWeight:700,fontSize:"9px"}}>{id}</span>{c.rdtii?.[k]?<span style={{opacity:0.75}}>{c.rdtii[k]}</span>:null}</span>))}
                               {c.penalty&&<span className="text-xs px-1.5 py-0.5 rounded-full" style={{background:"rgba(185,28,28,0.08)",color:"#B91C1C"}}>⚠ {c.penalty}</span>}
                             </div>
                           )}
@@ -2786,6 +2797,7 @@ function MemoryLayer() {
   const [error,setError]=React.useState<string|null>(null);
   const [jur,setJur]=React.useState("");
   const [ctype,setCtype]=React.useState("");
+  const [reviewOnly,setReviewOnly]=React.useState(false);
   const [batch,setBatch]=React.useState<any>(null);
   const [upState,setUpState]=React.useState<"idle"|"loading"|"done"|"error">("idle");
   const [upResult,setUpResult]=React.useState<any>(null);
@@ -2910,7 +2922,17 @@ function MemoryLayer() {
           <option value="">All types</option>
           {types.map(t=><option key={t} value={t}>{t}</option>)}
         </select>
+        <button onClick={()=>setReviewOnly(v=>!v)} title="Show only low-confidence clauses (confidence < 0.80) for human review"
+          className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium"
+          style={reviewOnly?{background:"rgba(217,119,6,0.12)",color:"#B45309",border:"1px solid #B45309"}:{background:"#fff",color:"#64748B",border:"1px solid #E5E9F0"}}>
+          ⚑ Needs review{clauses.filter(c=>c.reviewNeeded).length?` (${clauses.filter(c=>c.reviewNeeded).length})`:""}
+        </button>
         <div className="flex-1"/>
+        <a href={`${API}/export/clauses.csv${(()=>{const p=new URLSearchParams();if(jur)p.set("jurisdiction",jur);if(ctype)p.set("type",ctype);const s=p.toString();return s?`?${s}`:"";})()}`}
+          className="flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-semibold"
+          style={{background:"#fff",color:"#1E3A5F",border:"1px solid #1E3A5F",textDecoration:"none"}}>
+          <Download size={14}/>Export CSV
+        </a>
         <button onClick={runBatch} disabled={batch?.running}
           className="flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-semibold"
           style={{background:batch?.running?"#94A3B8":"#1E3A5F",color:"#fff",border:"none",cursor:batch?.running?"default":"pointer"}}>
@@ -2930,22 +2952,50 @@ function MemoryLayer() {
             <p className="text-sm" style={{color:"#94A3B8"}}>No clauses extracted yet. Click &ldquo;Extract clauses (all sources)&rdquo; to populate the archive.</p>
           </div>
         )}
-        {clauses.map((c,i)=>{
+        {!loading&&!error&&reviewOnly&&clauses.length>0&&clauses.filter(c=>c.reviewNeeded).length===0&&(
+          <div className="rounded-xl p-8 text-center" style={{background:"#fff",border:"1px dashed #E5E9F0"}}>
+            <p className="text-sm" style={{color:"#047857"}}>✓ No clauses need review — every extracted clause has confidence ≥ 0.80.</p>
+          </div>
+        )}
+        {(reviewOnly?clauses.filter(c=>c.reviewNeeded):clauses).map((c,i)=>{
           const col=CLAUSE_TYPE_COLOR[c.type]||"#475569";
           return (
-            <div key={i} className="rounded-xl px-4 py-3" style={{background:"#fff",border:"1px solid #E5E9F0"}}>
+            <div key={i} className="rounded-xl px-4 py-3" style={{background:"#fff",border:reviewOnly?"1px solid #FBBF24":"1px solid #E5E9F0"}}>
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-xs font-bold uppercase tracking-wider px-1.5 py-0.5 rounded" style={{color:col,background:h2r(col,0.1)}}>{c.type}</span>
                 <span className="text-sm font-semibold" style={{color:"#0F172A"}}>{c.instrument}</span>
                 <span className="text-xs" style={{color:"#94A3B8"}}>{c.jurisdiction}</span>
-                {c.citation&&<span className="text-xs" style={{color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{c.citation}</span>}
+                {c.level&&<span className="text-xs px-1.5 py-0.5 rounded" style={{background:"rgba(30,58,95,0.06)",color:"#475569"}}>{c.level}</span>}
+                {c.lawNumber&&<span className="text-xs" style={{color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{c.lawNumber}</span>}
+                {c.citation&&<span className="text-xs" style={{color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{c.citation}{c.locationReference?` · ${c.locationReference}`:""}</span>}
+                {c.discoveryTag&&<span className="text-xs px-1.5 py-0.5 rounded-full" style={{background:"rgba(180,83,9,0.1)",color:"#B45309"}}>🔎 new find</span>}
+                {c.reviewNeeded&&<span className="text-xs px-1.5 py-0.5 rounded-full" style={{background:"rgba(217,119,6,0.12)",color:"#B45309"}} title={`Low confidence (${c.confidence?.toFixed(2)}) — human review recommended`}>⚑ review{c.confidence!=null?` · ${c.confidence.toFixed(2)}`:""}</span>}
+                {(()=>{const t=sourceTier(c.url);return t?(<span className="text-xs px-1.5 py-0.5 rounded-full" title={t==="primary"?"Official / primary source":"Secondary source — verify against an official publisher"} style={t==="primary"?{background:"rgba(4,120,87,0.1)",color:"#047857"}:{background:"rgba(100,116,139,0.12)",color:"#64748B"}}>{t==="primary"?"✓ primary":"secondary"}</span>):null;})()}
                 <a href={c.url} target="_blank" rel="noreferrer" className="ml-auto"><Link size={12} style={{color:"#94A3B8"}}/></a>
               </div>
-              <p className="text-sm leading-relaxed mb-1" style={{color:"#1E293B"}}>{c.text}</p>
-              {c.sourceQuote&&<p className="text-xs leading-snug pl-2" style={{color:"#64748B",fontFamily:"Georgia, serif",fontStyle:"italic",borderLeft:"2px solid #E5E9F0"}}>&ldquo;{c.sourceQuote}&rdquo;</p>}
-              {((c.rdtii&&c.rdtii.length)||c.penalty)&&(
+              {reviewOnly?(
+                <div className="grid gap-3 mt-1" style={{gridTemplateColumns:"1fr 1fr"}}>
+                  <div>
+                    <p className="text-xs font-semibold mb-1" style={{color:"#B45309"}}>AI-extracted rule</p>
+                    <p className="text-sm leading-relaxed" style={{color:"#1E293B"}}>{c.text}</p>
+                    {c.mappingRationale&&<p className="text-xs mt-1" style={{color:"#64748B"}}><span style={{fontWeight:600}}>Why:</span> {c.mappingRationale}</p>}
+                  </div>
+                  <div style={{borderLeft:"2px solid #FDE68A",paddingLeft:"0.75rem"}}>
+                    <p className="text-xs font-semibold mb-1" style={{color:"#64748B"}}>Source evidence {c.citation?`· ${c.citation}`:""}</p>
+                    {c.sourceQuote
+                      ? <p className="text-xs leading-snug" style={{color:"#334155",fontFamily:"Georgia, serif",fontStyle:"italic"}}>&ldquo;{c.sourceQuote}&rdquo;</p>
+                      : <p className="text-xs" style={{color:"#94A3B8"}}>No verbatim quote captured — open the source to verify.</p>}
+                    <a href={c.url} target="_blank" rel="noreferrer" className="text-xs inline-flex items-center gap-1 mt-1.5" style={{color:"#1E3A5F"}}><Link size={11}/>Open source</a>
+                  </div>
+                </div>
+              ):(<>
+                <p className="text-sm leading-relaxed mb-1" style={{color:"#1E293B"}}>{c.text}</p>
+                {c.sourceQuote&&<p className="text-xs leading-snug pl-2" style={{color:"#64748B",fontFamily:"Georgia, serif",fontStyle:"italic",borderLeft:"2px solid #E5E9F0"}}>&ldquo;{c.sourceQuote}&rdquo;</p>}
+                {c.mappingRationale&&<p className="text-xs mt-1" style={{color:"#64748B"}}><span style={{fontWeight:600}}>Why:</span> {c.mappingRationale}</p>}
+              </>)}
+              {((c.indicators&&c.indicators.length)||c.penalty)&&(
                 <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                  {(c.rdtii||[]).map((t:string)=>(<span key={t} className="text-xs px-1.5 py-0.5 rounded-full" style={{background:"rgba(30,58,95,0.07)",color:"#1E3A5F"}}>{t}</span>))}
+                  {(c.indicators||[]).map((id:string,k:number)=>(<span key={id} className="text-xs px-1.5 py-0.5 rounded-full inline-flex items-center gap-1" style={{background:"rgba(30,58,95,0.1)",color:"#1E3A5F",border:"1px solid rgba(30,58,95,0.22)"}}><span style={{fontFamily:"JetBrains Mono, monospace",fontWeight:700,fontSize:"9px"}}>{id}</span>{c.rdtii?.[k]?<span style={{opacity:0.75}}>{c.rdtii[k]}</span>:null}</span>))}
                   {c.penalty&&<span className="text-xs px-1.5 py-0.5 rounded-full" style={{background:"rgba(185,28,28,0.08)",color:"#B91C1C"}}>⚠ {c.penalty}</span>}
                 </div>
               )}

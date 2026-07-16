@@ -1,53 +1,26 @@
 // AI auto-classification of regulatory instruments via the Gemini API.
-// Maps a scraped instrument onto the controlled vocabularies used by the dataset
-// (the two pillars + the policy-focus taxonomy), so new sources can be tagged
-// automatically instead of by hand.
+// Maps an instrument onto the OFFICIAL UN ESCAP RDTII indicator taxonomy
+// (P#-I# indicator IDs from CrawlerSeed_v2.xlsx — see indicators.ts).
 
-// UN ESCAP RDTII-aligned regulatory categories for digital trade & data governance.
-// {code, name} pairs — codes follow the RDTII pillar groupings (DP=data, CB=cross-border,
-// CS=cybersecurity, ET=e-transactions, CP=consumer, IP=IP, CO=competition, MA=market access).
-// Reconcile `name` strings with the official RDTII codebook if a newer version is published.
-export const RDTII_CATEGORIES: Array<{ code: string; name: string }> = [
-  { code: "DP-1", name: "Personal data protection & privacy" },
-  { code: "DP-2", name: "Sensitive / special-category data" },
-  { code: "CB-1", name: "Cross-border data flows" },
-  { code: "CB-2", name: "Data localization / residency" },
-  { code: "CS-1", name: "Cybersecurity & critical information infrastructure" },
-  { code: "CS-2", name: "Lawful access / government surveillance" },
-  { code: "ET-1", name: "Electronic transactions & e-signatures" },
-  { code: "ET-2", name: "Digital trade facilitation & paperless trade" },
-  { code: "CP-1", name: "Online consumer protection" },
-  { code: "CP-2", name: "Content regulation & intermediary liability" },
-  { code: "IP-1", name: "Intellectual property in digital trade" },
-  { code: "CO-1", name: "Competition & platform regulation" },
-  { code: "MA-1", name: "Market access & digital taxation/tariffs" },
-  { code: "FN-1", name: "Digital payments & fintech" },
-];
-const RDTII_NAMES = RDTII_CATEGORIES.map((c) => c.name);
+import { RDTII_INDICATORS, isIndicatorId, findIndicator, type RdtiiIndicator } from "./indicators.js";
+import { recordGeminiUsage } from "./cost.js";
 
-const TAXONOMY = {
-  pillars: [
-    "Cross-border data policies",
-    "Domestic data protection & privacy",
-  ],
-  policyFocus: [
-    "Lack of dedicated legal framework for cybersecurity",
-    "Lack of comprehensive legal framework for data protection",
-    "Requirements to allow government access to personal data",
-    "Minimum period of data retention requirements",
-    "Data Protection Impact Assessment or Data Protection Officer requirements",
-    "Local storage requirements",
-    "Ban & local processing requirements",
-    "Infrastructure requirements",
-    "Conditional flow regimes",
-    "Not in agreement with binding commitments on data transfer",
-  ],
-};
+// Legacy shim: kept so clause-level tagging (extract.ts / engine.ts) still compiles.
+// Now derived from the REAL indicators — no more made-up DP-1 codes.
+export const RDTII_CATEGORIES: Array<{ code: string; name: string }> =
+  RDTII_INDICATORS.map((i) => ({ code: i.id, name: i.focus }));
+
+// Compact catalog for the prompt, grouped by pillar.
+const INDICATOR_CATALOG = RDTII_INDICATORS
+  .map((i) => `${i.id} (P${i.pillarId} ${i.pillar}): ${i.focus}`)
+  .join("\n");
 
 export interface Classification {
+  /** OFFICIAL RDTII indicator IDs (P#-I#) the instrument maps to. */
+  indicators: RdtiiIndicator[];
+  /** UI/back-compat alias: [{ code: indicatorId, name: focus }]. */
   rdtii: Array<{ code: string; name: string }>;
   pillars: string[];
-  policyFocus: string[];
   coverage: string;
   rationale: string;
   model: string;
@@ -68,19 +41,18 @@ export async function classifyInstrument(input: ClassifyInput): Promise<Classifi
   if (!key) throw new Error("GEMINI_API_KEY is not set.");
   const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
-  const prompt = `You classify digital-trade and data-governance legal instruments onto fixed UN ESCAP RDTII vocabularies.
-Pick ALL applicable values; if uncertain choose the closest. Use ONLY values from the lists (verbatim).
+  const prompt = `You map a digital-trade / data-governance legal instrument onto the OFFICIAL UN ESCAP RDTII indicator taxonomy.
+Choose ONLY indicator IDs from the CATALOG below (verbatim, e.g. "P7-I2"). Pick 1-4 that the instrument actually addresses; if none clearly apply, return an empty list. Do NOT invent IDs.
 
-RDTII_CATEGORIES (choose 1-4, by name): ${JSON.stringify(RDTII_NAMES)}
-PILLARS (choose 1-2): ${JSON.stringify(TAXONOMY.pillars)}
-POLICY_FOCUS (choose 1-4): ${JSON.stringify(TAXONOMY.policyFocus)}
+RDTII INDICATOR CATALOG (id (Pillar): focus):
+${INDICATOR_CATALOG}
 
 Instrument: ${input.instrument}
 Jurisdiction: ${input.jurisdiction || "Unknown"}
 Excerpt: ${(input.excerpt || "").replace(/\s+/g, " ").slice(0, 1500)}
 
 Respond ONLY with JSON of shape:
-{"rdtii":[...category names...],"pillars":[...],"policyFocus":[...],"coverage":"<short label e.g. Cross-cutting, Financial sector, Health data, Telecommunications>","rationale":"<one short sentence>"}`;
+{"indicatorIds":["P#-I#", ...],"coverage":"<short label e.g. Cross-cutting, Financial sector, Health data, Telecommunications>","rationale":"<one short sentence citing which indicators and why>"}`;
 
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
@@ -99,6 +71,7 @@ Respond ONLY with JSON of shape:
     throw new Error(`Gemini ${res.status}: ${t.slice(0, 400)}`);
   }
   const data: any = await res.json();
+  recordGeminiUsage(model, data);
   const text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 
   let parsed: any;
@@ -108,17 +81,20 @@ Respond ONLY with JSON of shape:
     throw new Error(`Could not parse model output as JSON: ${text.slice(0, 200)}`);
   }
 
-  // keep only values that are actually in the taxonomy
-  const rdtii = (parsed.rdtii ?? [])
-    .map((name: string) => RDTII_CATEGORIES.find((c) => c.name === name))
-    .filter((c: unknown): c is { code: string; name: string } => !!c);
-  const pillars = (parsed.pillars ?? []).filter((p: string) => TAXONOMY.pillars.includes(p));
-  const policyFocus = (parsed.policyFocus ?? []).filter((p: string) => TAXONOMY.policyFocus.includes(p));
+  // keep ONLY real indicator IDs that exist in the seed taxonomy (anti-hallucination)
+  const ids: string[] = Array.isArray(parsed.indicatorIds) ? parsed.indicatorIds : [];
+  const indicators: RdtiiIndicator[] = [...new Set(ids)]
+    .filter((id) => typeof id === "string" && isIndicatorId(id))
+    .map((id) => findIndicator(id)!)
+    .slice(0, 6);
+
+  const pillars = [...new Set(indicators.map((i) => i.pillar))];
+  const rdtii = indicators.map((i) => ({ code: i.id, name: i.focus }));
 
   return {
+    indicators,
     rdtii,
     pillars,
-    policyFocus,
     coverage: typeof parsed.coverage === "string" ? parsed.coverage : "Cross-cutting",
     rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
     model,

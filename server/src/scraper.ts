@@ -2,6 +2,7 @@ import * as cheerio from "cheerio";
 import type { RegulationSource, ScrapeResult } from "./types.js";
 import { insertScrape, getLatestScrape, snapshotVersion } from "./db.js";
 import { ocrPdf, likelyScanned } from "./ocr.js";
+import { classifyAuthority } from "./authority.js";
 
 
 // Government sites front their content with WAFs that reject non-browser UAs,
@@ -77,6 +78,42 @@ export async function fetchPdfText(url: string, timeoutMs = 25_000, maxChars = 1
   }
 }
 
+/**
+ * Ask the Internet Archive for the closest working snapshot of a URL.
+ * Returns the RAW-content snapshot URL (…/timestampid_/… serves the original bytes
+ * without the Wayback toolbar) or null if nothing is archived.
+ */
+export async function fetchWaybackSnapshot(url: string, timeoutMs = 12_000): Promise<{ url: string; timestamp: string } | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const api = `https://archive.org/wayback/available?url=${encodeURIComponent(url)}`;
+    const res = await fetch(api, { signal: controller.signal });
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    const closest = data?.archived_snapshots?.closest;
+    if (!closest?.available || !closest.url) return null;
+    // insert `id_` after the timestamp to get the original resource (no injected header)
+    const raw = String(closest.url).replace(/\/web\/(\d+)\//, "/web/$1id_/").replace(/^http:/, "https:");
+    return { url: raw, timestamp: String(closest.timestamp ?? "") };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Extract clean text from a URL (HTML via cheerio, or PDF via unpdf). Used for archived snapshots. */
+async function textFromUrl(url: string, isPdf: boolean, maxChars = MAX_EXCERPT): Promise<string | null> {
+  if (isPdf) return fetchPdfText(url, 25_000, maxChars);
+  const html = await fetchText(url, 15_000);
+  if (!html) return null;
+  const $ = cheerio.load(html);
+  $("script, style, noscript, svg, header, footer, nav").remove();
+  const text = ($("main").length ? $("main") : $("body")).text().replace(/\s+/g, " ").trim();
+  return text || null;
+}
+
 /** Fetch raw text (for sitemap/XML parsing) with a small size guard. */
 export async function fetchText(url: string, timeoutMs = 12_000): Promise<string | null> {
   const controller = new AbortController();
@@ -106,6 +143,7 @@ export async function scrapeSource(source: RegulationSource): Promise<ScrapeResu
     ok: false,
     status: 0,
     fetchedAt: new Date().toISOString(),
+    authority: classifyAuthority(source.url),
   };
   const last = await getLatestScrape(source.id);
   if (last?.ok) {
@@ -127,6 +165,22 @@ export async function scrapeSource(source: RegulationSource): Promise<ScrapeResu
     base.status = res.status;
     if (!res.ok) {
       base.error = `HTTP ${res.status}`;
+      // Web-archive fallback: the original is gone → recover from the Internet Archive.
+      const snap = await fetchWaybackSnapshot(source.url).catch(() => null);
+      if (snap) {
+        const isPdf = source.format === "pdf" || /\.pdf(\?|#|$)/i.test(source.url);
+        const text = await textFromUrl(snap.url, isPdf).catch(() => null);
+        if (text && text.length >= 120) {
+          base.ok = true;
+          base.title = source.instrument;
+          base.excerpt = text.slice(0, MAX_EXCERPT);
+          base.archived = { url: snap.url, timestamp: snap.timestamp };
+          base.error = undefined;
+          console.log(`[archive] recovered ${source.url} from Wayback (${snap.timestamp})`);
+          void snapshotVersion(source.id, text).catch(() => {});
+          return base;
+        }
+      }
       return base;
     }
 
@@ -146,7 +200,7 @@ export async function scrapeSource(source: RegulationSource): Promise<ScrapeResu
           .catch(() => null);
         if (buf && likelyScanned(source.url, text)) {
           // run OCR async — don't block the scraper
-          ocrPdf(buf, source.id).then(ocrText => {
+          ocrPdf(buf, source.id, 12_000, { jurisdiction: source.jurisdiction }).then(ocrText => {
             if (ocrText) console.log(`[OCR] Done for ${source.url}`);
           }).catch(() => {});
           base.excerpt = "Scanned PDF — OCR running in background.";

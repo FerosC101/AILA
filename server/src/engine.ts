@@ -8,12 +8,12 @@
 
 import { scrapeSource } from "./scraper.js";
 import { extractSource } from "./extract.js";
-import { classifyInstrument, classifierEnabled, RDTII_CATEGORIES } from "./classify.js";
+import { classifyInstrument, classifierEnabled } from "./classify.js";
+import { findIndicator } from "./indicators.js";
 import { detectLanguage } from "./translate.js";
 import { findSource, findSourceByUrl } from "./sources.js";
 
 const ENGINE_VERSION = "aila-engine/1.0";
-const codeFor = (name: string) => RDTII_CATEGORIES.find((c) => c.name === name)?.code;
 
 export interface EngineClause {
   id: string;
@@ -94,7 +94,7 @@ export async function analyzeDocument(idOrUrl: string, byUrl = false): Promise<E
     actor: c.actor,
     citation: c.citation,
     snippet: c.sourceQuote,
-    indicators: (c.rdtii ?? []).map((name) => ({ code: codeFor(name), name })),
+    indicators: (c.indicators ?? []).map((id) => ({ code: id, name: findIndicator(id)?.focus ?? id })),
     penalty: c.penalty,
     effectiveDate: c.effectiveDate,
     confidence: c.confidence,
@@ -116,7 +116,7 @@ export async function analyzeDocument(idOrUrl: string, byUrl = false): Promise<E
     pipeline: {
       discovery: { ok: scrape.ok, status: scrape.status, documentLinks: scrape.documentLinks ?? [], ms: discoveryMs },
       extraction: { clauseCount: clauses.length, method: process.env.GEMINI_MODEL || "gemini-2.5-flash", ms: extractionMs },
-      mapping: { rdtii: cls.rdtii ?? [], pillars: cls.pillars ?? [], policyFocus: cls.policyFocus ?? [], ms: mappingMs },
+      mapping: { rdtii: cls.rdtii ?? [], pillars: cls.pillars ?? [], policyFocus: (cls.indicators ?? []).map((i) => i.focus), ms: mappingMs },
       categorization: { coverage: cls.coverage, rationale: cls.rationale, confidence: 0.85 },
     },
     clauses,
