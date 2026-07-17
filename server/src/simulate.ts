@@ -186,6 +186,73 @@ ${facts}`;
   return data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 }
 
+/**
+ * Parse a free-text scenario ("I run a health-tech app storing Filipino patient
+ * data on AWS Singapore…") into a structured SimScenario. Uses Gemini when
+ * available, then validates everything against the dataset-derived option lists.
+ */
+export async function parseScenario(text: string): Promise<SimScenario> {
+  const opts = simulationOptions();
+  const lc = text.toLowerCase();
+
+  // Heuristic extraction (also the no-key fallback): scan for known values.
+  const heuristic = (): SimScenario => ({
+    businessType: undefined,
+    dataCategories: opts.dataCategories.filter((c) => c.split(/[\s/]+/).some((w) => w.length > 3 && lc.includes(w.toLowerCase()))),
+    storageRegion: opts.storageRegions.find((r) => lc.includes(r.toLowerCase()))
+      ?? (/\b(offshore|abroad|overseas|aws|azure|google cloud|us|europe|eu)\b/i.test(text) ? "Self-hosted (offshore)" : "In-country"),
+    targetJurisdictions: opts.jurisdictions.filter((j) => lc.includes(j.toLowerCase())),
+    crossBorderTransfer: /\b(cross[-\s]?border|transfer|offshore|abroad|overseas|export)\b/i.test(text),
+    controls: {
+      consent: /\bconsent\b/i.test(text), dpa: /\b(dpa|data processing agreement)\b/i.test(text),
+      encryption: /\bencrypt/i.test(text), localCopy: /\b(local copy|in[-\s]?country copy|data residency|local storage)\b/i.test(text),
+    },
+  });
+
+  let scenario = heuristic();
+
+  const key = process.env.GEMINI_API_KEY;
+  if (key) {
+    const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const prompt = `Extract a structured compliance scenario from the DESCRIPTION. Return ONLY JSON:
+{"businessType": string|null, "dataCategories": string[], "storageRegion": string, "targetJurisdictions": string[], "crossBorderTransfer": boolean, "controls": {"consent":bool,"dpa":bool,"encryption":bool,"localCopy":bool}}
+Rules:
+- targetJurisdictions: ONLY values from ${JSON.stringify(opts.jurisdictions)} (countries the data concerns/operates in).
+- dataCategories: ONLY values from ${JSON.stringify(opts.dataCategories)}.
+- storageRegion: the closest single value from ${JSON.stringify(opts.storageRegions)}.
+- crossBorderTransfer: true if data leaves the target country's borders.
+- controls: true only if the description says the business already has it; else false.
+DESCRIPTION: ${text}`;
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0, responseMimeType: "application/json" } }),
+      });
+      if (res.ok) {
+        const data: any = await res.json();
+        recordGeminiUsage(model, data);
+        const p = JSON.parse(data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}");
+        scenario = {
+          businessType: typeof p.businessType === "string" ? p.businessType : undefined,
+          dataCategories: Array.isArray(p.dataCategories) ? p.dataCategories.filter((c: any) => opts.dataCategories.includes(c)) : scenario.dataCategories,
+          storageRegion: opts.storageRegions.includes(p.storageRegion) ? p.storageRegion : scenario.storageRegion,
+          targetJurisdictions: Array.isArray(p.targetJurisdictions) ? p.targetJurisdictions.filter((j: any) => opts.jurisdictions.includes(j)) : scenario.targetJurisdictions,
+          crossBorderTransfer: typeof p.crossBorderTransfer === "boolean" ? p.crossBorderTransfer : scenario.crossBorderTransfer,
+          controls: {
+            consent: !!p.controls?.consent, dpa: !!p.controls?.dpa,
+            encryption: !!p.controls?.encryption, localCopy: !!p.controls?.localCopy,
+          },
+        };
+      }
+    } catch { /* keep heuristic */ }
+  }
+
+  // Guarantees for a runnable scenario.
+  if (!scenario.targetJurisdictions?.length) scenario.targetJurisdictions = opts.jurisdictions.slice(0, 3);
+  if (!scenario.dataCategories?.length) scenario.dataCategories = ["Personal"];
+  return scenario;
+}
+
 /** Form options derived from the dataset. */
 export function simulationOptions() {
   const jurisdictions = [...new Set(loadPolicies().map((p) => p.jurisdiction))]

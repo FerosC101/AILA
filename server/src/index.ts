@@ -8,7 +8,7 @@ import { scrapeAll, scrapeSource } from "./scraper.js";
 import { scanAll, resolveSource, refreshHealth, activeUrlSet, healthReady, healthState } from "./scanner.js";
 import { buildGraph } from "./graph.js";
 import { classifyInstrument, classifierEnabled } from "./classify.js";
-import { runSimulation, simulationOptions } from "./simulate.js";
+import { runSimulation, simulationOptions, parseScenario } from "./simulate.js";
 import { diffSource, diffUrls } from "./diff.js";
 import { getVersionHistory } from "./db.js";
 import { ragQuery, buildIndex, ragStatus, loadIndexFromDb } from "./rag.js";
@@ -17,9 +17,11 @@ import { initDb, upsertSources, dbStats, loadClauses,
 import { extractSource, extractorEnabled, extractAll, batchStatus, extractZone1 } from "./extract.js";
 import { analyzeDocument } from "./engine.js";
 import { processUpload } from "./upload.js";
-import { clausesCsv } from "./export.js";
+import { clausesCsv, round1Csv, round1Json } from "./export.js";
 import { costStatus } from "./cost.js";
 import { classifyAuthority } from "./authority.js";
+import { validateSeedRow, validateAll, validateStatus, validatorEnabled, type SeedRow } from "./validate.js";
+import { loadValidations, validationStats } from "./db.js";
 import multer from "multer";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -285,6 +287,61 @@ app.get("/export/clauses.csv", async (req, res) => {
 app.get("/cost", (_req, res) => res.json(costStatus()));
 
 // =============================================================================
+// AILA v5 — provision validation (validate-and-discover) + Round-1 export
+// =============================================================================
+
+/** POST /validate — validate ONE seed database row. Body: SeedRow { economy, lawName?, indicators?, ... }. */
+app.post("/validate", async (req, res) => {
+  if (!validatorEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  const seed = req.body ?? {};
+  if (!seed.economy) return res.status(400).json({ error: "economy is required." });
+  try {
+    res.json({ seed: { dbRow: seed.dbRow, economy: seed.economy }, provisions: await validateSeedRow(seed as SeedRow) });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** POST /validate/batch — validate a whole seed database in the background. Body: { seeds: SeedRow[] }. */
+app.post("/validate/batch", (req, res) => {
+  if (!validatorEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
+  const seeds = Array.isArray(req.body?.seeds) ? req.body.seeds : Array.isArray(req.body) ? req.body : null;
+  if (!seeds || !seeds.length) return res.status(400).json({ error: "Body must include a non-empty seeds[] array." });
+  void validateAll(seeds as SeedRow[]);
+  res.json({ started: true, total: seeds.length });
+});
+
+/** GET /validate/status — batch validation progress. */
+app.get("/validate/status", (_req, res) => res.json(validateStatus()));
+
+/** GET /validations — query validated provisions (?economy= ?indicator= ?tag=). */
+app.get("/validations", async (req, res) => {
+  const q = (k: string) => req.query[k] as string | undefined;
+  const [rows, stats] = await Promise.all([
+    loadValidations({ economy: q("economy"), indicator: q("indicator"), tag: q("tag") }),
+    validationStats(),
+  ]);
+  res.json({ stats, count: rows.length, validations: rows });
+});
+
+/** GET /export/round1.csv — the exact 13-column ESCAP-RDTII submission template. */
+app.get("/export/round1.csv", async (req, res) => {
+  const q = (k: string) => req.query[k] as string | undefined;
+  const csv = await round1Csv({ economy: q("economy"), indicator: q("indicator"), tag: q("tag") });
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="aila-round1-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send("﻿" + csv); // BOM for Excel UTF-8
+});
+
+/** GET /export/round1.json — supplementary JSON (richer metadata + provisions[] per law). */
+app.get("/export/round1.json", async (req, res) => {
+  const q = (k: string) => req.query[k] as string | undefined;
+  const data = await round1Json({ economy: q("economy"), indicator: q("indicator"), tag: q("tag") });
+  res.setHeader("Content-Disposition", `attachment; filename="aila-round1-${new Date().toISOString().slice(0, 10)}.json"`);
+  res.json(data);
+});
+
+// =============================================================================
 // Semantic version control & diff ("GitHub for regulations")
 // =============================================================================
 
@@ -334,6 +391,19 @@ app.post("/diff", async (req, res) => {
 /** GET /simulate/options — dataset-derived choices for the scenario form. */
 app.get("/simulate/options", (_req, res) => {
   res.json(simulationOptions());
+});
+
+/** POST /simulate/parse — turn a plain-English scenario into a structured run. Body: { text }. */
+app.post("/simulate/parse", async (req, res) => {
+  const text = req.body?.text;
+  if (!text || typeof text !== "string") return res.status(400).json({ error: "text is required." });
+  try {
+    const scenario = await parseScenario(text);
+    const result = await runSimulation({ ...scenario, explain: true });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 /** POST /simulate — run a what-if scenario against the policy dataset. */

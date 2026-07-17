@@ -1847,7 +1847,8 @@ function DiffEngine() {
 type SimOptions = { jurisdictions:string[]; dataCategories:string[]; storageRegions:string[]; controls:string[] };
 type SimVerdict = "permitted"|"conditional"|"restricted";
 type SimJur = { jurisdiction:string; flag:string; verdict:SimVerdict; score:number; friction:string; obligations:string[]; risks:string[]; instruments:Array<{instrument:string;url:string;pillar?:string}> };
-type SimResult = { overall:{verdict:SimVerdict;score:number;summary:string}; jurisdictions:SimJur[]; narrative?:string };
+type SimScenario = { businessType?:string; dataCategories?:string[]; storageRegion?:string; targetJurisdictions?:string[]; crossBorderTransfer?:boolean; controls?:Record<string,boolean> };
+type SimResult = { scenario?:SimScenario; overall:{verdict:SimVerdict;score:number;summary:string}; jurisdictions:SimJur[]; narrative?:string };
 
 const VERDICT_STYLE: Record<SimVerdict,{label:string;color:string;bg:string}> = {
   permitted:   { label:"Permitted",   color:"#047857", bg:"rgba(4,120,87,0.1)" },
@@ -1856,9 +1857,10 @@ const VERDICT_STYLE: Record<SimVerdict,{label:string;color:string;bg:string}> = 
 };
 const NAVY="#1E3A5F";
 
-function SimulationSandbox() {
+function SimulationSandbox({ seedText, onSeedConsumed, onAskAI }: { seedText?:string|null; onSeedConsumed?:()=>void; onAskAI?:(q:string)=>void }={}) {
   const base=(import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
   const [opt,setOpt]=useState<SimOptions|null>(null);
+  const [nl,setNl]=useState("");
   const [businessType,setBusinessType]=useState("Health-tech SaaS");
   const [cats,setCats]=useState<Set<string>>(new Set(["Personal","Health / Sensitive"]));
   const [region,setRegion]=useState("AWS Singapore");
@@ -1872,6 +1874,37 @@ function SimulationSandbox() {
   useEffect(()=>{ if(!base) return; fetch(`${base}/simulate/options`).then(r=>r.json()).then(setOpt).catch(()=>{}); },[base]);
 
   const toggleSet=(s:Set<string>,v:string,set:(x:Set<string>)=>void)=>{ const n=new Set(s); n.has(v)?n.delete(v):n.add(v); set(n); };
+
+  // Parse a plain-English scenario → fill the form → run. Also used when opened from chat.
+  const runFromText=async(text:string)=>{
+    const t=text.trim(); if(!t){ setErr("Describe your scenario first."); return; }
+    if(!base){ setErr("Backend not configured (VITE_AILA_API_BASE_URL)."); return; }
+    setLoading(true); setErr("");
+    try{
+      const r=await fetch(`${base}/simulate/parse`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t})});
+      if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||`HTTP ${r.status}`); }
+      const d:SimResult=await r.json();
+      setResult(d);
+      const s=d.scenario||{};
+      if(s.businessType) setBusinessType(s.businessType);
+      if(s.dataCategories) setCats(new Set(s.dataCategories));
+      if(s.storageRegion) setRegion(s.storageRegion);
+      if(s.targetJurisdictions) setTargets(new Set(s.targetJurisdictions));
+      if(typeof s.crossBorderTransfer==="boolean") setCrossBorder(s.crossBorderTransfer);
+      if(s.controls) setControls(c=>({...c,...s.controls}));
+    }catch(e){ setErr(e instanceof Error?e.message:String(e)); }
+    finally{ setLoading(false); }
+  };
+
+  // Auto-run when the twin is opened from the chat with a scenario question.
+  useEffect(()=>{ if(seedText){ setNl(seedText); runFromText(seedText); onSeedConsumed?.(); } /* eslint-disable-next-line */ },[seedText]);
+
+  const askAI=()=>{
+    if(!result||!onAskAI) return;
+    const notPermitted=result.jurisdictions.filter(j=>j.verdict!=="permitted").map(j=>`${j.jurisdiction} (${j.verdict})`).join(", ");
+    const q=`My compliance simulation — ${businessType||"my business"} storing ${[...cats].join(", ")||"data"} in ${region}, serving ${[...targets].join(", ")} — returned ${result.overall.verdict} (score ${result.overall.score})${notPermitted?`, with issues in ${notPermitted}`:""}. What concrete steps would make this compliant?`;
+    onAskAI(q);
+  };
 
   const run=async()=>{
     if(!base){ setErr("Backend not configured (VITE_AILA_API_BASE_URL)."); return; }
@@ -1895,7 +1928,25 @@ function SimulationSandbox() {
         <FlaskConical size={18} style={{color:NAVY}}/>
         <h1 className="text-xl font-semibold" style={{color:"#0F172A"}}>Compliance Digital Twin</h1>
       </div>
-      <p className="text-sm mb-6" style={{color:"#64748B"}}>Model a data-handling scenario and run what-ifs across ASEAN jurisdictions.</p>
+      <p className="text-sm mb-4" style={{color:"#64748B"}}>Model a data-handling scenario and run what-ifs across ASEAN jurisdictions.</p>
+
+      {/* natural-language scenario — Gemini parses it into the form below, then runs it */}
+      <div className="rounded-xl p-4 mb-6" style={{background:h2r(NAVY,0.04),border:`1px solid ${h2r(NAVY,0.15)}`}}>
+        <div className="flex items-center gap-2 mb-2">
+          <Brain size={14} style={{color:NAVY}}/>
+          <span className="text-xs font-semibold uppercase tracking-wider" style={{color:NAVY}}>Describe your scenario</span>
+        </div>
+        <div className="flex gap-2">
+          <input value={nl} onChange={e=>setNl(e.target.value)} onKeyDown={e=>e.key==="Enter"&&runFromText(nl)}
+            placeholder="e.g. A fintech storing Malaysian customer KYC data on AWS US, with consent but no local copy"
+            className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={{border:`1px solid ${h2r(NAVY,0.2)}`,color:"#0F172A",background:"#fff"}}/>
+          <button onClick={()=>runFromText(nl)} disabled={loading}
+            className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold shrink-0"
+            style={{background:loading?"#94A3B8":NAVY,color:"#fff",border:"none",cursor:loading?"default":"pointer"}}>
+            <FlaskConical size={14}/>Build &amp; run
+          </button>
+        </div>
+      </div>
 
       <div className="grid gap-6" style={{gridTemplateColumns:"340px 1fr"}}>
         {/* ===== scenario form ===== */}
@@ -1987,6 +2038,12 @@ function SimulationSandbox() {
                     <p className="text-sm leading-relaxed italic" style={{color:"#475569"}}>{result.narrative}</p>
                   </div>
                 )}
+                {onAskAI&&(
+                  <button onClick={askAI} className="mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold"
+                    style={{background:h2r(NAVY,0.07),color:NAVY,border:`1px solid ${h2r(NAVY,0.2)}`,cursor:"pointer"}}>
+                    <MessageSquare size={14}/> Ask AILA how to fix this
+                  </button>
+                )}
               </div>
 
               {/* per jurisdiction */}
@@ -2067,7 +2124,8 @@ function Field({label,children}:{label:string;children:React.ReactNode}) {
 type RichSection = { heading: string; type: "success"|"warning"|"info"|"neutral"; bullets: string[] };
 type RichCitation = { num: number; title: string; instrument: string; section: string; flag: string };
 type RichResponse = { summary: string; verdict: { label: string; color: string; bg: string }; sections: RichSection[]; citations: RichCitation[]; tags: string[] };
-type ChatMsg = { role: "ai"|"user"; text: string; rich?: RichResponse };
+type ArticleSnippet = { id:string; question:string; summary:string; verdict?:string; confidence?:number; sourcesAdded?:number };
+type ChatMsg = { role: "ai"|"user"; text?: string; rich?: RichResponse; article?: ArticleSnippet; result?: RagResult; sim?: { question:string; result:SimResult } };
 
 const INIT_MSGS: ChatMsg[] = [
   {role:"ai",text:"Hello! I'm AILA's SME Assistant. Ask me about regulatory requirements, cross-border data transfers, or compliance obligations across Southeast Asia."},
@@ -2194,7 +2252,6 @@ const CITED_PROVISIONS = [
 type RagCitation = { n:number; instrument:string; jurisdiction:string; url:string; score:number; snippet:string; live?:boolean };
 type RagKeyPoint = { heading:string; detail:string; citations:number[] };
 type RagResult = { question:string; answer:string; summary?:string; verdict?:string; keyPoints?:RagKeyPoint[]; risks?:string[]; recommendations?:string[]; confidence:number; grounded:boolean; citations:RagCitation[]; retrieved:number; sourcesAdded?:number; conversationId?:string; articleId?:string };
-type ArticleCard = { id:string; question:string; verdict?:string; confidence?:number };
 
 function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBack: () => void; onSimulate: () => void; result?: RagResult|null }) {
   const r = SME_RICH_RESPONSE;
@@ -2646,35 +2703,46 @@ function CrawlerGraphLoader() {
   );
 }
 
-function SMEAssistant({ onAsk, conversationId, setConversationId }: { onAsk: (q: string, result: RagResult|null) => void; conversationId: string|null; setConversationId: (id:string|null)=>void }) {
+function SMEAssistant({ onAsk, conversationId, setConversationId, seedQuestion, onSeedConsumed, onOpenSim }: { onAsk: (q: string, result: RagResult|null) => void; conversationId: string|null; setConversationId: (id:string|null)=>void; seedQuestion?:string|null; onSeedConsumed?:()=>void; onOpenSim?:(text:string)=>void }) {
   const base=(import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
   const [msgs,setMsgs]=useState<ChatMsg[]>(INIT_MSGS);
   const [input,setInput]=useState("");
   const [pending,setPending]=useState(false);
+  const [simming,setSimming]=useState(false);
   const [uploading,setUploading]=useState(false);
-  const [articles,setArticles]=useState<ArticleCard[]>([]);
   const [recent,setRecent]=useState<{id:string;title:string;articleCount?:number}[]>([]);
   const end=useRef<HTMLDivElement>(null);
   const fileRef=useRef<HTMLInputElement>(null);
+  const loadedRef=useRef<string|null>(null);   // which conversation is currently rendered in msgs
   useEffect(()=>{ end.current?.scrollIntoView({behavior:"smooth"}); },[msgs,pending]);
 
-  // Load recent conversations, and the current conversation's saved article cards.
+  // Load the list of recent conversations for the resume dropdown.
   useEffect(()=>{ if(base) fetch(`${base}/conversations`).then(r=>r.json()).then(d=>setRecent(Array.isArray(d)?d:[])).catch(()=>{}); },[base]);
+
+  // Rebuild the conversation transcript (question + inline article-snippet) when a
+  // conversation is resumed or the assistant is re-entered — but not for the one
+  // we are actively building (loadedRef guards against clobbering fresh sends).
   useEffect(()=>{
-    if(!base||!conversationId){ setArticles([]); return; }
+    if(!base||!conversationId||loadedRef.current===conversationId) return;
     fetch(`${base}/conversations/${conversationId}`).then(r=>r.json()).then(d=>{
-      if(d?.articles) setArticles(d.articles.map((a:any)=>({id:a.id,question:a.question,verdict:a.verdict,confidence:a.confidence})));
+      if(!d?.articles) return;
+      const rebuilt:ChatMsg[]=[INIT_MSGS[0]];
+      for(const a of d.articles){
+        rebuilt.push({role:"user",text:a.question});
+        rebuilt.push({role:"ai",article:{id:a.id,question:a.question,summary:a.summary,verdict:a.verdict,confidence:a.confidence}});
+      }
+      setMsgs(rebuilt);
+      loadedRef.current=conversationId;
     }).catch(()=>{});
   },[base,conversationId]);
 
-  const send=async()=>{
-    if (!input.trim()||pending) return;
-    const q=input.trim();
+  const send=async(qOverride?:string)=>{
+    const q=(qOverride??input).trim();
+    if (!q||pending) return;
     setInput("");
     setMsgs(m=>[...m,{role:"user",text:q}]);
     setPending(true);
-    // RAG: retrieve (+ live web fallback) + grounded answer, then redirect to the full answer page.
-    const started=Date.now();
+    // RAG: retrieve (+ live web fallback) + grounded answer, rendered inline as an article snippet.
     let result:RagResult|null=null;
     try{
       if(base){
@@ -2682,21 +2750,39 @@ function SMEAssistant({ onAsk, conversationId, setConversationId }: { onAsk: (q:
         if(r.ok) result=await r.json();
       }
     }catch{ /* fall back to static answer */ }
-    if(result?.conversationId){
-      setConversationId(result.conversationId);
-      if(result.articleId) setArticles(a=>[...a,{id:result!.articleId!,question:q,verdict:result!.verdict,confidence:result!.confidence}]);
+    setPending(false);
+    if(result){
+      if(result.conversationId){ setConversationId(result.conversationId); loadedRef.current=result.conversationId; }
+      setMsgs(m=>[...m,{role:"ai",result,article:{id:result!.articleId||"",question:q,summary:result!.summary||result!.answer||"",verdict:result!.verdict,confidence:result!.confidence,sourcesAdded:result!.sourcesAdded}}]);
+      fetch(`${base}/conversations`).then(r=>r.json()).then(d=>setRecent(Array.isArray(d)?d:[])).catch(()=>{}); // refresh resume list
+    }else{
+      setMsgs(m=>[...m,{role:"ai",text:"I couldn't reach the research backend. Please try again."}]);
     }
-    // keep the search animation visible for at least ~1.4s so it doesn't flash
-    const wait=Math.max(0,1400-(Date.now()-started));
-    setTimeout(()=>{ setPending(false); onAsk(q,result); },wait);
   };
 
-  const openArticle=async(id:string)=>{
-    if(!base) return;
+  const openArticle=async(m:ChatMsg)=>{
+    if(m.result){ onAsk(m.article!.question,m.result); return; }
+    const id=m.article?.id; if(!base||!id) return;
     try{ const a=await fetch(`${base}/articles/${id}`).then(r=>r.json()); if(a?.payload) onAsk(a.question,a.payload); }catch{ /* ignore */ }
   };
 
-  const newChat=()=>{ setConversationId(null); setArticles([]); setMsgs(INIT_MSGS); };
+  const newChat=()=>{ setConversationId(null); loadedRef.current=null; setMsgs(INIT_MSGS); };
+
+  // Run the question through the compliance digital twin, rendered inline.
+  const runSim=async(question:string)=>{
+    if(!base||simming) return;
+    setSimming(true);
+    setMsgs(m=>[...m,{role:"user",text:`🧪 Simulate: ${question}`}]);
+    try{
+      const r=await fetch(`${base}/simulate/parse`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:question})});
+      const d=await r.json();
+      setMsgs(m=>[...m, r.ok?{role:"ai",sim:{question,result:d}}:{role:"ai",text:`Simulation failed: ${d?.error||"error"}.`}]);
+    }catch{ setMsgs(m=>[...m,{role:"ai",text:"Couldn't reach the simulation engine."}]); }
+    setSimming(false);
+  };
+
+  // When opened from the twin ("Ask AILA"), auto-send the seeded question once.
+  useEffect(()=>{ if(seedQuestion){ send(seedQuestion); onSeedConsumed?.(); } /* eslint-disable-next-line */ },[seedQuestion]);
 
   const onUpload=async(e:React.ChangeEvent<HTMLInputElement>)=>{
     const f=e.target.files?.[0]; if(!f||!base) return;
@@ -2733,29 +2819,6 @@ function SMEAssistant({ onAsk, conversationId, setConversationId }: { onAsk: (q:
         </div>
       </div>
 
-      {/* Saved answers rail — click a card to reopen the article */}
-      {articles.length>0&&(
-        <div className="mb-4">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-xs font-semibold uppercase tracking-wider" style={{color:"#94A3B8"}}>Saved answers · this conversation</span>
-            <button onClick={newChat} className="text-xs" style={{color:"#1E3A5F",background:"none",border:"none",cursor:"pointer"}}>＋ New</button>
-          </div>
-          <div className="flex gap-2 overflow-x-auto pb-1" style={{scrollbarWidth:"thin"}}>
-            {articles.map(a=>(
-              <button key={a.id} onClick={()=>openArticle(a.id)}
-                className="shrink-0 text-left rounded-xl px-3 py-2 transition-colors"
-                style={{width:"200px",background:"#fff",border:"1px solid #E5E9F0",cursor:"pointer"}}>
-                <p className="text-xs font-medium leading-snug mb-1" style={{color:"#0F172A",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{a.question}</p>
-                <div className="flex items-center gap-1.5">
-                  {a.verdict&&<span className="text-xs px-1.5 py-0.5 rounded-full" style={{background:"rgba(30,58,95,0.07)",color:"#475569",fontSize:"10px"}}>{a.verdict}</span>}
-                  {a.confidence!=null&&<span className="text-xs" style={{color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{Math.round(a.confidence*100)}%</span>}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div className="flex gap-2 mb-4 flex-wrap">
         {["Can I store health data offshore?","Cross-border transfer rules","Fintech licensing in SG","AI regulation requirements"].map(q=>(
           <button key={q} onClick={()=>setInput(q)}
@@ -2775,10 +2838,62 @@ function SMEAssistant({ onAsk, conversationId, setConversationId }: { onAsk: (q:
                 <Brain size={13} style={{color:"#475569"}}/>
               </div>
             )}
-            <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${m.role==="user"?"max-w-sm rounded-tr-sm":"max-w-lg rounded-tl-sm"}`}
-              style={{background:m.role==="user"?"rgba(30,64,175,0.07)":"#ffffff",border:`1px solid ${m.role==="user"?"rgba(30,64,175,0.15)":"rgba(0,0,0,0.07)"}`,color:"#1E293B"}}>
-              {m.text}
-            </div>
+            {m.article ? (
+              <div className="flex flex-col gap-1.5 max-w-lg w-full">
+                {/* inline article snippet — a preview of the generated brief, click to open */}
+                <button onClick={()=>openArticle(m)} className="text-left rounded-2xl rounded-tl-sm overflow-hidden w-full transition-shadow"
+                  style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.09)",cursor:"pointer",boxShadow:"0 1px 2px rgba(15,23,42,0.04)"}}>
+                  <div style={{background:"#1E3A5F",padding:"10px 14px"}}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <FileText size={12} style={{color:"rgba(255,255,255,0.85)"}}/>
+                      <span className="text-xs font-semibold uppercase tracking-wider" style={{color:"rgba(255,255,255,0.85)",letterSpacing:"0.05em"}}>Research Brief</span>
+                      <span className="ml-auto text-xs" style={{color:"rgba(255,255,255,0.7)",fontFamily:"JetBrains Mono, monospace"}}>{Math.round((m.article.confidence??0)*100)}%</span>
+                    </div>
+                    <p className="text-sm font-semibold leading-snug" style={{color:"#fff",fontFamily:"Georgia, 'Times New Roman', serif"}}>{m.article.question}</p>
+                  </div>
+                  <div style={{padding:"11px 14px"}}>
+                    <p className="text-xs leading-relaxed" style={{color:"#475569",display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{m.article.summary}</p>
+                    <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                      {m.article.verdict&&<span className="text-xs px-1.5 py-0.5 rounded-full" style={{background:"rgba(30,58,95,0.08)",color:"#1E3A5F",fontSize:"10px"}}>{m.article.verdict}</span>}
+                      {!!m.article.sourcesAdded&&<span className="text-xs px-1.5 py-0.5 rounded-full inline-flex items-center gap-1" style={{background:"rgba(4,120,87,0.1)",color:"#047857",fontSize:"10px"}}><Globe size={9}/>{m.article.sourcesAdded} scraped live</span>}
+                      <span className="ml-auto text-xs font-semibold inline-flex items-center gap-1" style={{color:"#1E3A5F"}}>Read full brief <ChevronRight size={12}/></span>
+                    </div>
+                  </div>
+                </button>
+                {/* bridge to the digital twin */}
+                <button onClick={()=>runSim(m.article!.question)} disabled={simming}
+                  className="self-start flex items-center gap-1.5 text-xs font-medium rounded-full px-2.5 py-1"
+                  style={{background:"rgba(30,58,95,0.06)",color:"#1E3A5F",border:"1px solid rgba(30,58,95,0.18)",cursor:simming?"default":"pointer"}}>
+                  <FlaskConical size={12}/> Run as compliance simulation
+                </button>
+              </div>
+            ) : m.sim ? (
+              <div className="rounded-2xl rounded-tl-sm overflow-hidden max-w-lg w-full" style={{background:"#fff",border:"1px solid rgba(0,0,0,0.09)"}}>
+                <div className="flex items-center gap-2" style={{background:h2r(NAVY,0.05),padding:"9px 14px"}}>
+                  <FlaskConical size={13} style={{color:NAVY}}/>
+                  <span className="text-xs font-semibold uppercase tracking-wider" style={{color:NAVY}}>Compliance Twin</span>
+                  <span className="ml-auto text-xs font-bold uppercase px-2 py-0.5 rounded-full" style={{color:VERDICT_STYLE[m.sim.result.overall.verdict].color,background:VERDICT_STYLE[m.sim.result.overall.verdict].bg}}>{VERDICT_STYLE[m.sim.result.overall.verdict].label} · {m.sim.result.overall.score}</span>
+                </div>
+                <div style={{padding:"11px 14px"}}>
+                  <p className="text-xs leading-relaxed mb-2" style={{color:"#475569"}}>{m.sim.result.narrative||m.sim.result.overall.summary}</p>
+                  <div className="flex flex-col gap-1">
+                    {m.sim.result.jurisdictions.map(j=>(
+                      <div key={j.jurisdiction} className="flex items-center gap-2 text-xs">
+                        <span>{j.flag}</span><span style={{color:"#334155",width:"92px"}}>{j.jurisdiction}</span>
+                        <span className="px-1.5 py-0.5 rounded-full" style={{fontSize:"10px",color:VERDICT_STYLE[j.verdict].color,background:VERDICT_STYLE[j.verdict].bg}}>{VERDICT_STYLE[j.verdict].label}</span>
+                        <span className="ml-auto" style={{color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{j.score}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {onOpenSim&&<button onClick={()=>onOpenSim(m.sim!.question)} className="mt-2.5 flex items-center gap-1 text-xs font-semibold" style={{color:NAVY,background:"none",border:"none",cursor:"pointer"}}>Open full simulator <ChevronRight size={12}/></button>}
+                </div>
+              </div>
+            ) : (
+              <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${m.role==="user"?"max-w-sm rounded-tr-sm":"max-w-lg rounded-tl-sm"}`}
+                style={{background:m.role==="user"?"rgba(30,64,175,0.07)":"#ffffff",border:`1px solid ${m.role==="user"?"rgba(30,64,175,0.15)":"rgba(0,0,0,0.07)"}`,color:"#1E293B"}}>
+                {m.text}
+              </div>
+            )}
           </div>
         ))}
         {pending&&(
@@ -2807,7 +2922,7 @@ function SMEAssistant({ onAsk, conversationId, setConversationId }: { onAsk: (q:
           placeholder="Ask about regulatory requirements, compliance obligations, or specific laws..."
           className="flex-1 rounded-xl px-4 py-3 text-sm outline-none"
           style={{background:"#ffffff",border:"1px solid rgba(0,0,0,0.1)",color:"#0F172A",fontFamily:"Inter, sans-serif"}}/>
-        <button onClick={send}
+        <button onClick={()=>send()}
           className="px-4 py-3 rounded-xl flex items-center justify-center"
           style={{background:"#1E3A5F",border:"1px solid rgba(29,78,216,0.5)"}}>
           <Send size={16} style={{color:"#fff"}}/>
@@ -2877,11 +2992,8 @@ function MemoryLayer() {
   const [jur,setJur]=React.useState("");
   const [ctype,setCtype]=React.useState("");
   const [reviewOnly,setReviewOnly]=React.useState(false);
+  const [val,setVal]=React.useState<number|null>(null);
   const [batch,setBatch]=React.useState<any>(null);
-  const [upState,setUpState]=React.useState<"idle"|"loading"|"done"|"error">("idle");
-  const [upResult,setUpResult]=React.useState<any>(null);
-  const [upErr,setUpErr]=React.useState("");
-  const fileRef=React.useRef<HTMLInputElement>(null);
 
   const loadClauses=React.useCallback(()=>{
     if(!API) return;
@@ -2894,6 +3006,7 @@ function MemoryLayer() {
   React.useEffect(()=>{
     if(!API){ setError("Backend URL not configured."); setLoading(false); return; }
     fetch(`${API}/health`).then(r=>r.json()).then(setHealth).catch(()=>{});
+    fetch(`${API}/validations`).then(r=>r.json()).then(d=>setVal(d?.stats?.total ?? 0)).catch(()=>{});
     loadClauses();
   },[API,loadClauses]);
 
@@ -2908,20 +3021,6 @@ function MemoryLayer() {
       if(s.running) setTimeout(poll,3000); else { loadClauses(); fetch(`${API}/health`).then(x=>x.json()).then(setHealth); }
     };
     poll();
-  };
-
-  const onUpload=async(file:File)=>{
-    if(!API) return;
-    setUpState("loading"); setUpErr(""); setUpResult(null);
-    try{
-      const fd=new FormData(); fd.append("file",file);
-      const r=await fetch(`${API}/upload`,{method:"POST",body:fd});
-      if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||`HTTP ${r.status}`); }
-      const out=await r.json();
-      setUpResult(out); setUpState("done");
-      // uploaded doc's clauses now persisted — refresh archive + stats
-      loadClauses(); fetch(`${API}/health`).then(x=>x.json()).then(setHealth);
-    }catch(err){ setUpErr(err instanceof Error?err.message:String(err)); setUpState("error"); }
   };
 
   const jurisdictions=[...new Set(clauses.map(c=>c.jurisdiction))].sort();
@@ -2945,52 +3044,6 @@ function MemoryLayer() {
       </div>
       <p className="text-sm mb-5" style={{color:"#64748B"}}>Structured regulatory atoms extracted from the live corpus — each with its type, citation, and verbatim source evidence.</p>
 
-      {/* ===== upload a document (OCR + engine) ===== */}
-      <input ref={fileRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.txt,image/*,application/pdf,text/plain" style={{display:"none"}}
-        onChange={e=>{ const f=e.target.files?.[0]; if(f) onUpload(f); e.target.value=""; }}/>
-      <div
-        onClick={()=>upState!=="loading"&&fileRef.current?.click()}
-        onDragOver={e=>{e.preventDefault();}}
-        onDrop={e=>{e.preventDefault(); const f=e.dataTransfer.files?.[0]; if(f&&upState!=="loading") onUpload(f);}}
-        className="rounded-xl mb-4 flex flex-col items-center justify-center text-center transition-colors"
-        style={{border:`1.5px dashed ${upState==="loading"?"#CBD5E1":h2r(NAVY,0.4)}`,background:upState==="loading"?"#F1F5F9":h2r(NAVY,0.02),padding:"22px",cursor:upState==="loading"?"default":"pointer"}}>
-        {upState==="loading"?(
-          <div className="flex items-center gap-2.5"><Radio size={16} style={{color:NAVY}}/><span className="text-sm" style={{color:"#475569"}}>Processing — OCR → extraction → mapping… (scanned files take longer)</span></div>
-        ):(
-          <><div className="flex items-center gap-2 mb-1"><FileText size={18} style={{color:NAVY}}/><span className="text-sm font-semibold" style={{color:"#0F172A"}}>Upload a legal document</span></div>
-          <p className="text-xs" style={{color:"#94A3B8"}}>Drag &amp; drop or click — PDF, scanned image (OCR), or text. Runs the full engine and adds it to the archive.</p></>
-        )}
-      </div>
-      {upState==="error"&&<p className="text-xs mb-3" style={{color:"#B91C1C"}}>{upErr}</p>}
-      {upState==="done"&&upResult&&(
-        <div className="rounded-xl mb-4 p-4" style={{background:"#fff",border:`1px solid ${h2r(NAVY,0.25)}`}}>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs font-bold uppercase tracking-widest px-2 py-0.5 rounded" style={{background:h2r(NAVY,0.1),color:NAVY}}>Engine output</span>
-            <span className="text-sm font-semibold" style={{color:"#0F172A"}}>{upResult.document.instrument}</span>
-            <span className="text-xs" style={{color:"#94A3B8"}}>{upResult.document.sourceType} · {upResult.document.language} · {upResult.document.chars} chars</span>
-            <button onClick={()=>{const b=new Blob([JSON.stringify(upResult,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`aila-output-${upResult.document.id}.json`;a.click();URL.revokeObjectURL(a.href);}}
-              className="ml-auto text-xs font-semibold flex items-center gap-1" style={{color:NAVY,cursor:"pointer",background:"none",border:"none"}}><FileText size={12}/> Download JSON</button>
-          </div>
-          {upResult.note?(
-            <p className="text-xs" style={{color:"#B45309"}}>{upResult.note}</p>
-          ):(
-            <>
-              <div className="grid grid-cols-3 gap-2 mb-2">
-                {[["ingest",`${upResult.pipeline.ingest.ms}ms`],["clauses",upResult.pipeline.extraction.clauseCount],["indicators",upResult.pipeline.mapping.rdtii.length]].map(([l,v]:any)=>(
-                  <div key={l} className="rounded-md py-1.5 text-center" style={{background:"#F8FAFC",border:"1px solid #E5E9F0"}}>
-                    <div className="text-sm font-bold" style={{color:NAVY,fontFamily:"JetBrains Mono, monospace"}}>{v}</div>
-                    <div className="text-xs" style={{color:"#94A3B8"}}>{l}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {upResult.document.discoveryTags.map((t:string)=>(<span key={t} className="text-xs px-1.5 py-0.5 rounded-full" style={{background:h2r(NAVY,0.07),color:NAVY}}>{t}</span>))}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
       {/* controls */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <select value={jur} onChange={e=>setJur(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none" style={{border:"1px solid #E5E9F0",color:"#334155",background:"#fff"}}>
@@ -3011,6 +3064,16 @@ function MemoryLayer() {
           className="flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-semibold"
           style={{background:"#fff",color:"#1E3A5F",border:"1px solid #1E3A5F",textDecoration:"none"}}>
           <Download size={14}/>Export CSV
+        </a>
+        <a href={`${API}/export/round1.csv`} title="Primary: ESCAP-RDTII 13-column Round-1 submission (validated provisions)"
+          className="flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-semibold"
+          style={{background:"#1E3A5F",color:"#fff",border:"1px solid #1E3A5F",textDecoration:"none"}}>
+          <Download size={14}/>Round-1 CSV{val!=null?` (${val})`:""}
+        </a>
+        <a href={`${API}/export/round1.json`} title="Supplementary: richer metadata + provisions[] per law"
+          className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-semibold"
+          style={{background:"#fff",color:"#6D28D9",border:"1px solid #6D28D9",textDecoration:"none"}}>
+          <Download size={14}/>JSON
         </a>
         <button onClick={runBatch} disabled={batch?.running}
           className="flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-semibold"
@@ -3196,6 +3259,8 @@ export default function App() {
   const [query,setQuery]=useState("");
   const [answer,setAnswer]=useState<RagResult|null>(null);
   const [conversationId,setConversationId]=useState<string|null>(null);
+  const [simSeed,setSimSeed]=useState<string|null>(null);   // text sent from chat → twin
+  const [chatSeed,setChatSeed]=useState<string|null>(null); // question sent from twin → chat
   const [viz,setViz]=useState<"graph"|"globe">("graph");
   const isDash=view==="dashboard"||view==="graph";
 
@@ -3249,9 +3314,9 @@ export default function App() {
             transition={{duration:0.28,ease:"easeOut"}}
             className="absolute inset-0 z-40 overflow-auto"
             style={{background:"rgba(248,250,252,0.99)",paddingTop:"56px"}}>
-            {view==="simulation"&&<SimulationSandbox/>}
+            {view==="simulation"&&<SimulationSandbox seedText={simSeed} onSeedConsumed={()=>setSimSeed(null)} onAskAI={q=>{setChatSeed(q);setView("sme");}}/>}
             {view==="memory"&&<MemoryLayer/>}
-            {view==="sme"&&<SMEAssistant onAsk={onAsk} conversationId={conversationId} setConversationId={setConversationId}/>}
+            {view==="sme"&&<SMEAssistant onAsk={onAsk} conversationId={conversationId} setConversationId={setConversationId} seedQuestion={chatSeed} onSeedConsumed={()=>setChatSeed(null)} onOpenSim={text=>{setSimSeed(text);setView("simulation");}}/>}
             {view==="settings"&&<SettingsView/>}
             {view==="diff"&&<DiffEngine/>}
             {view==="countries"&&<CountriesView/>}

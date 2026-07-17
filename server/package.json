@@ -10,6 +10,8 @@
     "build": "tsc -p tsconfig.json",
     "eval": "tsx eval/run-eval.ts",
     "eval:extract": "tsx eval/run-extract-eval.ts",
+    "ingest:round1": "tsx scripts/ingest-round1.ts",
+    "seed": "tsx scripts/load-seed.ts",
     "sources": "tsx -e \"import('./src/sources.js').then(m => console.log(JSON.stringify(m.loadSources(), null, 2)))\""
   },
   "dependencies": {

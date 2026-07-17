@@ -156,6 +156,32 @@ export async function initDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_articles_conv ON articles(conversation_id, created_at);
   `);
 
+  // AILA v5 provision-validation output — one row per validated legal provision,
+  // traceable to the originating Round-1 database row (the 13-column ESCAP template).
+  await db.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS validations (
+      id                TEXT PRIMARY KEY,
+      db_row            TEXT,
+      economy           TEXT NOT NULL,
+      law_name          TEXT,
+      law_number        TEXT,
+      last_amended      TEXT,
+      indicator_id      TEXT,
+      article_section   TEXT,
+      discovery_tag     TEXT,
+      verbatim          TEXT,
+      mapping_rationale TEXT,
+      source_url        TEXT,
+      confidence        REAL,
+      notes             TEXT,
+      seed_json         TEXT,
+      created_at        INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_validations_econ ON validations(economy);
+    CREATE INDEX IF NOT EXISTS idx_validations_ind  ON validations(indicator_id);
+    CREATE INDEX IF NOT EXISTS idx_validations_tag  ON validations(discovery_tag);
+  `);
+
   // migration: clause embeddings (older DBs created the table without it)
   try { await db.execute("ALTER TABLE clauses ADD COLUMN embedding TEXT"); } catch { /* already exists */ }
   // migration: real RDTII indicator IDs (P#-I#) per clause
@@ -261,6 +287,83 @@ export async function getArticle(id: string): Promise<ArticleRow | null> {
 export async function priorFindings(conversationId: string, limit = 3): Promise<string> {
   const res = await db.execute({ sql: "SELECT question, summary FROM articles WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?", args: [conversationId, limit] });
   return res.rows.reverse().map((r: any, i: number) => `[P${i + 1}] Q: ${r.question}\n    A: ${r.summary}`).join("\n");
+}
+
+// ── Validations (AILA v5 provision validation) ────────────────────────────────
+
+export type DiscoveryTag = "VERIFIED" | "UPDATED" | "NEW" | "INVALID";
+export interface ValidationRow {
+  id?: string;
+  dbRow?: string;            // Location Reference — originating Round-1 DB row (e.g. "DB Row 43")
+  economy: string;
+  lawName?: string;
+  lawNumber?: string;
+  lastAmended?: string;
+  indicatorId?: string;      // P#-I#
+  articleSection?: string;
+  discoveryTag?: DiscoveryTag;
+  verbatim?: string;         // exact statutory text (blank if not officially retrieved)
+  mappingRationale?: string;
+  sourceUrl?: string;
+  confidence?: number;       // 0..1 (exported High/Medium/Low)
+  notes?: string;
+  seed?: any;                // the original seed row (for audit)
+}
+
+/** Replace all validation rows for a seed DB row (idempotent re-validation), or append if no dbRow. */
+export async function saveValidations(rows: ValidationRow[], replaceDbRow?: string): Promise<void> {
+  const stmts: { sql: string; args: any[] }[] = [];
+  if (replaceDbRow) stmts.push({ sql: "DELETE FROM validations WHERE db_row = ?", args: [replaceDbRow] });
+  for (const r of rows) {
+    stmts.push({
+      sql: `INSERT INTO validations
+        (id, db_row, economy, law_name, law_number, last_amended, indicator_id, article_section,
+         discovery_tag, verbatim, mapping_rationale, source_url, confidence, notes, seed_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        `val-${randomUUID().slice(0, 8)}`, r.dbRow ?? null, r.economy, r.lawName ?? null, r.lawNumber ?? null,
+        r.lastAmended ?? null, r.indicatorId ?? null, r.articleSection ?? null, r.discoveryTag ?? null,
+        r.verbatim ?? null, r.mappingRationale ?? null, r.sourceUrl ?? null,
+        typeof r.confidence === "number" ? r.confidence : null, r.notes ?? null,
+        r.seed ? JSON.stringify(r.seed) : null,
+      ],
+    });
+  }
+  if (stmts.length) await db.batch(stmts, "write");
+}
+
+function hydrateValidation(row: any): ValidationRow {
+  return {
+    id: row.id, dbRow: row.db_row ?? undefined, economy: row.economy,
+    lawName: row.law_name ?? undefined, lawNumber: row.law_number ?? undefined,
+    lastAmended: row.last_amended ?? undefined, indicatorId: row.indicator_id ?? undefined,
+    articleSection: row.article_section ?? undefined, discoveryTag: row.discovery_tag ?? undefined,
+    verbatim: row.verbatim ?? undefined, mappingRationale: row.mapping_rationale ?? undefined,
+    sourceUrl: row.source_url ?? undefined, confidence: row.confidence ?? undefined,
+    notes: row.notes ?? undefined, seed: row.seed_json ? JSON.parse(row.seed_json) : undefined,
+  };
+}
+
+/** Query validations with optional filters. */
+export async function loadValidations(filter: { economy?: string; indicator?: string; tag?: string; limit?: number } = {}): Promise<ValidationRow[]> {
+  const where: string[] = [];
+  const args: any[] = [];
+  if (filter.economy) { where.push("LOWER(economy) = ?"); args.push(filter.economy.toLowerCase()); }
+  if (filter.indicator) { where.push("indicator_id = ?"); args.push(filter.indicator); }
+  if (filter.tag) { where.push("discovery_tag = ?"); args.push(filter.tag.toUpperCase()); }
+  const sql = `SELECT * FROM validations ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY economy, db_row, indicator_id LIMIT ?`;
+  args.push(filter.limit ?? 10_000);
+  const res = await db.execute({ sql, args });
+  return res.rows.map(hydrateValidation);
+}
+
+/** Counts by discovery tag (end-of-batch summary). */
+export async function validationStats() {
+  const res = await db.execute("SELECT discovery_tag as tag, COUNT(*) as n FROM validations GROUP BY discovery_tag");
+  const byTag: Record<string, number> = {};
+  let total = 0;
+  for (const r of res.rows as any[]) { byTag[r.tag ?? "UNTAGGED"] = Number(r.n); total += Number(r.n); }
+  return { total, byTag };
 }
 
 // ── embedding helpers ─────────────────────────────────────────────────────────
