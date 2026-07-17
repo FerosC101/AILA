@@ -175,12 +175,18 @@ export async function initDb(): Promise<void> {
       confidence        REAL,
       notes             TEXT,
       seed_json         TEXT,
+      raw_context       TEXT,
+      processing_ms     INTEGER,
       created_at        INTEGER NOT NULL DEFAULT (unixepoch())
     );
     CREATE INDEX IF NOT EXISTS idx_validations_econ ON validations(economy);
     CREATE INDEX IF NOT EXISTS idx_validations_ind  ON validations(indicator_id);
     CREATE INDEX IF NOT EXISTS idx_validations_tag  ON validations(discovery_tag);
   `);
+  // migration: supplementary-JSON metadata (older DBs created validations without these)
+  for (const col of ["raw_context TEXT", "processing_ms INTEGER"]) {
+    try { await db.execute(`ALTER TABLE validations ADD COLUMN ${col}`); } catch { /* already exists */ }
+  }
 
   // migration: clause embeddings (older DBs created the table without it)
   try { await db.execute("ALTER TABLE clauses ADD COLUMN embedding TEXT"); } catch { /* already exists */ }
@@ -308,6 +314,8 @@ export interface ValidationRow {
   confidence?: number;       // 0..1 (exported High/Medium/Low)
   notes?: string;
   seed?: any;                // the original seed row (for audit)
+  rawContext?: string;       // surrounding source text around the verbatim (HITL review)
+  processingMs?: number;     // wall-clock time to validate the seed row
 }
 
 /** Replace all validation rows for a seed DB row (idempotent re-validation), or append if no dbRow. */
@@ -318,14 +326,15 @@ export async function saveValidations(rows: ValidationRow[], replaceDbRow?: stri
     stmts.push({
       sql: `INSERT INTO validations
         (id, db_row, economy, law_name, law_number, last_amended, indicator_id, article_section,
-         discovery_tag, verbatim, mapping_rationale, source_url, confidence, notes, seed_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         discovery_tag, verbatim, mapping_rationale, source_url, confidence, notes, seed_json, raw_context, processing_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         `val-${randomUUID().slice(0, 8)}`, r.dbRow ?? null, r.economy, r.lawName ?? null, r.lawNumber ?? null,
         r.lastAmended ?? null, r.indicatorId ?? null, r.articleSection ?? null, r.discoveryTag ?? null,
         r.verbatim ?? null, r.mappingRationale ?? null, r.sourceUrl ?? null,
         typeof r.confidence === "number" ? r.confidence : null, r.notes ?? null,
         r.seed ? JSON.stringify(r.seed) : null,
+        r.rawContext ?? null, typeof r.processingMs === "number" ? r.processingMs : null,
       ],
     });
   }
@@ -341,6 +350,7 @@ function hydrateValidation(row: any): ValidationRow {
     verbatim: row.verbatim ?? undefined, mappingRationale: row.mapping_rationale ?? undefined,
     sourceUrl: row.source_url ?? undefined, confidence: row.confidence ?? undefined,
     notes: row.notes ?? undefined, seed: row.seed_json ? JSON.parse(row.seed_json) : undefined,
+    rawContext: row.raw_context ?? undefined, processingMs: row.processing_ms ?? undefined,
   };
 }
 

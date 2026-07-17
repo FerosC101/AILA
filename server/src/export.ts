@@ -59,24 +59,30 @@ export async function round1Json(filter: { economy?: string; indicator?: string;
     if (!byLaw.has(key)) byLaw.set(key, {
       economy: r.economy, law_name: r.lawName ?? null, law_number: r.lawNumber ?? null,
       last_amended: r.lastAmended ?? null, source_url: r.sourceUrl ?? null,
-      source_pdf_path: null, ocr_quality_cer: null,   // require pipeline instrumentation (not captured yet)
+      source_pdf_path: null, ocr_quality_cer: null,   // require local-PDF caching + a CER metric (not built)
+      processing_time: null as number | null,
       provisions: [] as any[],
     });
-    byLaw.get(key).provisions.push({
+    const law = byLaw.get(key);
+    law.provisions.push({
       indicator_id: r.indicatorId ?? null, article_section: r.articleSection ?? null,
       discovery_tag: tagOut(r.discoveryTag) || null, validation_status: r.discoveryTag ?? null,
       location_reference: r.dbRow ?? null, verbatim_snippet: r.verbatim || null,
       mapping_rationale: r.mappingRationale ?? null, confidence: r.confidence ?? null,
-      notes: r.notes ?? null, raw_context: null,
+      notes: r.notes ?? null, raw_context: r.rawContext ?? null,
     });
+    // processing_time (seconds) for the law = the doc's validation wall-clock time
+    if (typeof r.processingMs === "number") law.processing_time = Number((r.processingMs / 1000).toFixed(2));
   }
+  const laws = [...byLaw.values()];
+  const totalSec = laws.reduce((a, l) => a + (l.processing_time ?? 0), 0);
   return {
     generated_at: new Date().toISOString(),
     model_version: `${process.env.GEMINI_MODEL || "gemini-2.5-flash"} + gemini-embedding-001 / OCR: tesseract.js`,
-    processing_time: null,   // per-doc timing not yet instrumented
+    processing_time: Number(totalSec.toFixed(2)),   // total validation wall-clock (sum of per-doc)
     law_count: byLaw.size,
     provision_count: rows.length,
-    laws: [...byLaw.values()],
+    laws,
   };
 }
 

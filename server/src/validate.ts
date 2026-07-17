@@ -141,10 +141,28 @@ Return ONLY JSON: {"provisions":[ ... ]}`;
   catch { return []; }
 }
 
+/**
+ * Locate the verbatim in the source text and return the surrounding window (HITL review
+ * context). Returns undefined when the snippet can't be located — honest null beats page chrome.
+ */
+function contextAround(text: string, verbatim: string, window = 240): string | undefined {
+  if (!text || verbatim.length < 12) return undefined;
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ");
+  const hay = norm(text);
+  // try progressively shorter leading probes so light reformatting still matches
+  for (const len of [60, 40, 25]) {
+    const probe = norm(verbatim).slice(0, len).trim();
+    const idx = hay.indexOf(probe);
+    if (idx >= 0) return text.slice(Math.max(0, idx - window), Math.min(text.length, idx + verbatim.length + window)).replace(/\s+/g, " ").trim();
+  }
+  return undefined; // couldn't locate — leave null rather than emit navigation boilerplate
+}
+
 /** Validate one seed row → persisted ValidationRow[] (one per provision). */
 export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean } = {}): Promise<ValidationRow[]> {
   if (!validatorEnabled()) throw new Error("GEMINI_API_KEY not configured.");
   const dbRow = rowRef(seed);
+  const t0 = Date.now();
 
   const urls = await discoverSources(seed);
   const sources: { url: string; text: string }[] = [];
@@ -181,6 +199,7 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
           tag = undefined;
           notes = `Could not confirm the exact provision from an official source this session — flagged for manual verification. ${notes ?? ""}`.trim();
         }
+        const srcText = sources.find((s) => s.url === sourceUrl)?.text ?? sources[0]?.text ?? "";
         return {
           dbRow, economy: seed.economy,
           lawName: typeof p.lawName === "string" && p.lawName ? p.lawName : seed.lawName,
@@ -192,6 +211,7 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
           mappingRationale: typeof p.mappingRationale === "string" ? p.mappingRationale.slice(0, 300) : undefined,
           sourceUrl, confidence: typeof p.confidence === "number" ? Math.max(0, Math.min(1, p.confidence)) : 0.5,
           notes, seed,
+          rawContext: contextAround(srcText, verbatim),
         } as ValidationRow;
       });
     if (!rows.length) {
@@ -201,6 +221,8 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
     }
   }
 
+  const processingMs = Date.now() - t0;
+  rows = rows.map((r) => ({ ...r, processingMs }));
   if (opts.persist !== false) await saveValidations(rows, dbRow);
   return rows;
 }
