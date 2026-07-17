@@ -67,9 +67,14 @@ Respond ONLY with JSON of shape:
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Gemini ${res.status}: ${t.slice(0, 400)}`);
+  const t = await res.text();
+  if (res.status === 429) {
+    console.error(`[Tag] Gemini rate limit reached (429) for model "${model}". ...`);
+  } else {
+    console.error(`[Tag] Gemini error ${res.status}:`, t.slice(0, 400));
   }
+  // then either throw (classify/extract) or return undefined (simulate, which already degrades gracefully)
+}
   const data: any = await res.json();
   recordGeminiUsage(model, data);
   const text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";

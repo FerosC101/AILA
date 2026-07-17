@@ -2,17 +2,8 @@
 // (the mandated hand-over format). One row per clause; multi-indicator clauses
 // join their indicator IDs with "; ". Confidence < REVIEW_THRESHOLD → Review Needed = YES.
 
-import { loadClauses, loadValidations, REVIEW_THRESHOLD } from "./db.js";
+import { loadClauses, loadValidations, REVIEW_THRESHOLD, type StoredClause, type ValidationRow } from "./db.js";
 import { findIndicator } from "./indicators.js";
-
-// Column order follows the gap-analysis Output Guide's compulsory schema.
-const HEADERS = [
-  "Economy", "Law Name", "Law Number", "Level", "Last Amended",
-  "Clause Type", "Actor", "Indicator ID", "Indicator Focus", "Pillar",
-  "Article / Section", "Location Reference", "Discovery Tag",
-  "Verbatim Snippet", "Mapping Rationale", "Source URL",
-  "Confidence", "Review Needed", "Notes", "Rule Text",
-];
 
 /** RFC-4180 field escaping: quote when the value contains a comma, quote, or newline. */
 function esc(v: unknown): string {
@@ -20,34 +11,236 @@ function esc(v: unknown): string {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-// The exact 13-column ESCAP-RDTII Round-1 output template (order is mandated).
-const ROUND1_HEADERS = [
-  "Economy", "Law Name", "Law Number / Ref", "Last Amended", "Indicator ID", "Article / Section",
-  "Discovery Tag", "Location Reference", "Verbatim Snippet", "Mapping Rationale", "Source URL", "Confidence", "Notes",
+type ExportRow = StoredClause | ValidationRow;
+
+/** ValidationRow has `economy`; StoredClause has `jurisdiction` instead — use as discriminator. */
+const isValidationRow = (r: ExportRow): r is ValidationRow => "economy" in r;
+
+interface ColumnDef {
+  id: string;
+  label: string;
+  group: string;
+  defaultChecked?: boolean;
+  getValue: (row: ExportRow) => string;
+}
+
+// Single source of truth for every compulsory-field column, grouped per the
+// gap-analysis Output Guide's six sections. Both CSV exports and the JSON
+// export read from this table — nothing column-specific lives in the export
+// functions themselves anymore.
+//
+// `defaultChecked: true` marks the old mandated Round-1 13-column template —
+// this is what ships when the picker/export is called with no explicit
+// column selection, matching the previous round1Csv() behaviour exactly.
+const COLUMN_REGISTRY: ColumnDef[] = [
+  // 1. Context / Research Scope
+  {
+    id: "economy", label: "Economy", group: "Context / Research Scope", defaultChecked: true,
+    getValue: (r) => (isValidationRow(r) ? r.economy : r.jurisdiction) ?? "",
+  },
+  {
+    id: "pillarId", label: "Pillar_ID", group: "Context / Research Scope",
+    getValue: (r) => {
+      const ids = isValidationRow(r) ? (r.indicatorId ? [r.indicatorId] : []) : r.indicators ?? [];
+      return [...new Set(ids.map((id) => findIndicator(id)?.pillarId).filter((v): v is number => v != null))]
+        .join("; ");
+    },
+  },
+  {
+    id: "pillar", label: "Pillar", group: "Context / Research Scope",
+    getValue: (r) => {
+      const ids = isValidationRow(r) ? (r.indicatorId ? [r.indicatorId] : []) : r.indicators ?? [];
+      return [...new Set(ids.map((id) => findIndicator(id)?.pillar ?? "").filter(Boolean))].join("; ");
+    },
+  },
+  {
+    id: "indicatorFocus", label: "Indicator Focus", group: "Context / Research Scope",
+    getValue: (r) => {
+      const ids = isValidationRow(r) ? (r.indicatorId ? [r.indicatorId] : []) : r.indicators ?? [];
+      return ids.map((id) => findIndicator(id)?.focus ?? "").filter(Boolean).join("; ");
+    },
+  },
+  {
+    id: "indicatorId", label: "Indicator ID", group: "Context / Research Scope", defaultChecked: true,
+    getValue: (r) => (isValidationRow(r) ? r.indicatorId ?? "" : (r.indicators ?? []).join("; ")),
+  },
+  {
+    // Genuinely external ESCAP data — no ingestion path in this codebase yet, and none of
+    // Gemini/OCR/scraping can originate it (it's the ESCAP-side raw score, not ours to compute).
+    // Shipped in the picker so the column exists and is visibly labeled rather than silently
+    // blank; backfill once there's a real source for it.
+    id: "rawScore", label: "RawScore", group: "Context / Research Scope",
+    getValue: () => "Not yet extracted",
+  },
+
+  // 2. Legal Instrument Identification
+  {
+    id: "lawName", label: "Law Name", group: "Legal Instrument Identification", defaultChecked: true,
+    getValue: (r) => (isValidationRow(r) ? r.lawName : r.instrument) ?? "",
+  },
+  {
+    // FLAG: clausesCsv previously labeled this "Law Number"; the mandated
+    // Round-1 template calls it "Law Number / Ref". One registry entry can
+    // only carry one label — defaulting to the mandated text. Override if
+    // you want the shorter label back for the clauses export.
+    id: "lawNumber", label: "Law Number / Ref", group: "Legal Instrument Identification", defaultChecked: true,
+    getValue: (r) => r.lawNumber ?? "",
+  },
+  {
+    // Only exists on StoredClause — ValidationRow has no `level` field.
+    id: "level", label: "Level", group: "Legal Instrument Identification",
+    getValue: (r) => (isValidationRow(r) ? "" : r.level ?? ""),
+  },
+  {
+    id: "lastAmended", label: "Last Amended", group: "Legal Instrument Identification", defaultChecked: true,
+    getValue: (r) => r.lastAmended ?? "",
+  },
+  {
+    // Document-level scope (e.g. "Cross-cutting", "Telecommunications services"), stamped onto
+    // every clause of a document by extract.ts; populated by validate.ts for validation rows
+    // once that pipeline's prompt is extended (tracked separately — not wired yet there).
+    id: "coverage", label: "Coverage", group: "Legal Instrument Identification",
+    getValue: (r) => r.coverage ?? "",
+  },
+  {
+    // Document-level temporal scope (e.g. "Since 2023, last amended 2024"), same plumbing as Coverage.
+    id: "timeframe", label: "Timeframe", group: "Legal Instrument Identification",
+    getValue: (r) => r.timeframe ?? "",
+  },
+
+  // 3. Legal Classification
+  {
+    // Only exists on StoredClause.
+    id: "clauseType", label: "Clause Type", group: "Legal Classification",
+    getValue: (r) => (isValidationRow(r) ? "" : r.type ?? ""),
+  },
+  {
+    // Only exists on StoredClause.
+    id: "actor", label: "Actor", group: "Legal Classification",
+    getValue: (r) => (isValidationRow(r) ? "" : r.actor ?? ""),
+  },
+
+  // 4. Legal Evidence
+  {
+    id: "articleSection", label: "Article / Section", group: "Legal Evidence", defaultChecked: true,
+    getValue: (r) => (isValidationRow(r) ? r.articleSection : r.citation) ?? "",
+  },
+  {
+    // ValidationRow's dbRow field IS its location reference (per db.ts comment).
+    id: "locationReference", label: "Location Reference", group: "Legal Evidence", defaultChecked: true,
+    getValue: (r) => (isValidationRow(r) ? r.dbRow : r.locationReference) ?? "",
+  },
+  {
+    // Only exists on StoredClause.
+    id: "ruleText", label: "Rule Text", group: "Legal Evidence",
+    getValue: (r) => (isValidationRow(r) ? "" : r.text ?? ""),
+  },
+  {
+    id: "verbatimSnippet", label: "Verbatim Snippet", group: "Legal Evidence", defaultChecked: true,
+    getValue: (r) => (isValidationRow(r) ? r.verbatim : r.sourceQuote) ?? "",
+  },
+
+  // 5. Legal Analysis
+  {
+    id: "mappingRationale", label: "Mapping Rationale", group: "Legal Analysis", defaultChecked: true,
+    getValue: (r) => r.mappingRationale ?? "",
+  },
+  {
+    // Per-clause practical-impact note; populated by extract.ts's Gemini prompt for clauses.
+    // Not yet wired into validate.ts's provision-validation prompt — same follow-up as Coverage/Timeframe.
+    id: "impactComments", label: "Impact or Comments on Acts or Practices", group: "Legal Analysis",
+    getValue: (r) => r.impactComments ?? "",
+  },
+
+  // 6. Source & Validation
+  {
+    id: "sourceUrl", label: "Source URL", group: "Source & Validation", defaultChecked: true,
+    getValue: (r) => (isValidationRow(r) ? r.sourceUrl : r.url) ?? "",
+  },
+  {
+    // Preserves the original asymmetry: clauses show the raw discoveryTag
+    // text (e.g. "candidate — no RDTII match"); validations derive
+    // KNOWN/NEW via the old tagOut() rule (default KNOWN unless NEW).
+    id: "discoveryTag", label: "Discovery Tag", group: "Source & Validation", defaultChecked: true,
+    getValue: (r) => (isValidationRow(r) ? (r.discoveryTag === "NEW" ? "NEW" : "KNOWN") : r.discoveryTag ?? ""),
+  },
+  {
+    id: "confidence", label: "Confidence", group: "Source & Validation", defaultChecked: true,
+    getValue: (r) => (r.confidence != null ? r.confidence.toFixed(2) : ""),
+  },
+  {
+    // Pure code derivation, same rule for both row types.
+    id: "reviewNeeded", label: "Review Needed", group: "Source & Validation",
+    getValue: (r) => (r.confidence != null && r.confidence < REVIEW_THRESHOLD ? "YES" : ""),
+  },
+  {
+    // Preserves the original asymmetry: clauses show raw notes; validations
+    // get the old notesOut() [UPDATED]/[INVALID] prefix.
+    id: "notes", label: "Notes", group: "Source & Validation", defaultChecked: true,
+    getValue: (r) => {
+      if (!isValidationRow(r)) return r.notes ?? "";
+      const t = r.discoveryTag;
+      return (t === "UPDATED" || t === "INVALID") ? `[${t}] ${r.notes ?? ""}`.trim() : (r.notes ?? "");
+    },
+  },
 ];
 
-// Discovery Tag column per the official output spec: KNOWN (from the sample-kit DB)
-// or NEW (independently discovered). The engine's richer status (UPDATED / INVALID /
-// VERIFIED) is preserved in Notes so no detail is lost.
-// Every validated row originates from the sample-kit DB (KNOWN) unless it was an
-// independent discovery (NEW). Discovery Tag is a required field → default to KNOWN.
-const tagOut = (t?: string): string => (t === "NEW" ? "NEW" : "KNOWN");
-const notesOut = (t?: string, notes?: string): string =>
-  (t === "UPDATED" || t === "INVALID") ? `[${t}] ${notes ?? ""}`.trim() : (notes ?? "");
+const COLUMN_BY_ID = new Map(COLUMN_REGISTRY.map((c) => [c.id, c]));
 
-/** Build the Round-1 submission CSV — exact 13-column ESCAP template. */
-export async function round1Csv(filter: { economy?: string; indicator?: string; tag?: string } = {}): Promise<string> {
-  const rows = await loadValidations(filter);
-  const lines = [ROUND1_HEADERS.join(",")];
-  for (const r of rows) {
-    lines.push([
-      r.economy, r.lawName, r.lawNumber, r.lastAmended, r.indicatorId, r.articleSection,
-      tagOut(r.discoveryTag), r.dbRow, r.verbatim, r.mappingRationale, r.sourceUrl,
-      r.confidence != null ? r.confidence.toFixed(2) : "",   // numeric 0.00–1.00 per spec
-      notesOut(r.discoveryTag, r.notes),
-    ].map(esc).join(","));
-  }
+/** The columns checked by default in the picker UI — the old mandated Round-1 template. */
+export const DEFAULT_COLUMNS = COLUMN_REGISTRY.filter((c) => c.defaultChecked).map((c) => c.id);
+
+/** For the frontend picker: id/label/group/defaultChecked, grouped for display. */
+export function listColumns() {
+  return COLUMN_REGISTRY.map(({ id, label, group, defaultChecked }) => ({ id, label, group, defaultChecked }));
+}
+
+/** Hard cap on how many columns a single export request may select (picker safety valve). */
+const MAX_COLUMNS = 25;
+
+/**
+ * Validate a requested column id list against the registry:
+ * - omitted/empty → falls back to DEFAULT_COLUMNS (the old mandated Round-1 set)
+ * - more than MAX_COLUMNS ids → rejected
+ * - any id not in COLUMN_REGISTRY → rejected (no silent drops — the caller gets a clear error)
+ */
+function resolveColumns(columns?: string[]): ColumnDef[] {
+  const ids = columns && columns.length ? columns : DEFAULT_COLUMNS;
+  if (ids.length > MAX_COLUMNS) throw new Error(`Too many columns requested (${ids.length}) — max ${MAX_COLUMNS}.`);
+  return ids.map((id) => {
+    const col = COLUMN_BY_ID.get(id);
+    if (!col) throw new Error(`Unknown export column id: ${id}`);
+    return col;
+  });
+}
+
+interface ExportOpts {
+  source: "clauses" | "validations";
+  columns?: string[];              // validated + capped via resolveColumns(); defaults to DEFAULT_COLUMNS when omitted
+  filter?: { jurisdiction?: string; type?: string; sourceId?: string; economy?: string; indicator?: string; tag?: string };
+}
+
+/** Shared step for both exportCsv and exportJson: validate columns once, load rows once. */
+async function resolveExport({ source, columns, filter = {} }: ExportOpts): Promise<{ cols: ColumnDef[]; rows: ExportRow[] }> {
+  const cols = resolveColumns(columns);
+  const rows: ExportRow[] = source === "validations"
+    ? await loadValidations(filter)
+    : await loadClauses({ ...filter, limit: 10_000 });
+  return { cols, rows };
+}
+
+/** CSV export — column selection replaces the old round1Csv/clausesCsv split. */
+export async function exportCsv(opts: ExportOpts): Promise<string> {
+  const { cols, rows } = await resolveExport(opts);
+  const lines = [cols.map((c) => c.label).join(",")];
+  for (const r of rows) lines.push(cols.map((c) => esc(c.getValue(r))).join(","));
   return lines.join("\r\n");
+}
+
+/** JSON export — same column selection/validation as exportCsv; one flat object per row, keyed by column id. */
+export async function exportJson(opts: ExportOpts): Promise<Record<string, string>[]> {
+  const { cols, rows } = await resolveExport(opts);
+  return rows.map((r) => Object.fromEntries(cols.map((c) => [c.id, c.getValue(r)])));
 }
 
 /** Supplementary JSON — richer metadata the CSV can't hold cleanly, grouped by law. */
@@ -59,43 +252,51 @@ export async function round1Json(filter: { economy?: string; indicator?: string;
     if (!byLaw.has(key)) byLaw.set(key, {
       economy: r.economy, law_name: r.lawName ?? null, law_number: r.lawNumber ?? null,
       last_amended: r.lastAmended ?? null, source_url: r.sourceUrl ?? null,
-      source_pdf_path: null, ocr_quality_cer: null,   // require pipeline instrumentation (not captured yet)
+      source_pdf_path: null, ocr_quality_cer: null,
       provisions: [] as any[],
     });
     byLaw.get(key).provisions.push({
-      indicator_id: r.indicatorId ?? null, article_section: r.articleSection ?? null,
-      discovery_tag: tagOut(r.discoveryTag) || null, validation_status: r.discoveryTag ?? null,
-      location_reference: r.dbRow ?? null, verbatim_snippet: r.verbatim || null,
-      mapping_rationale: r.mappingRationale ?? null, confidence: r.confidence ?? null,
-      notes: r.notes ?? null, raw_context: null,
+      indicator_id: COLUMN_BY_ID.get("indicatorId")!.getValue(r) || null,
+      article_section: COLUMN_BY_ID.get("articleSection")!.getValue(r) || null,
+      discovery_tag: COLUMN_BY_ID.get("discoveryTag")!.getValue(r) || null,
+      validation_status: r.discoveryTag ?? null,
+      location_reference: COLUMN_BY_ID.get("locationReference")!.getValue(r) || null,
+      verbatim_snippet: COLUMN_BY_ID.get("verbatimSnippet")!.getValue(r) || null,
+      mapping_rationale: COLUMN_BY_ID.get("mappingRationale")!.getValue(r) || null,
+      confidence: r.confidence ?? null,
+      notes: COLUMN_BY_ID.get("notes")!.getValue(r) || null,
+      raw_context: null,
     });
   }
   return {
     generated_at: new Date().toISOString(),
     model_version: `${process.env.GEMINI_MODEL || "gemini-2.5-flash"} + gemini-embedding-001 / OCR: tesseract.js`,
-    processing_time: null,   // per-doc timing not yet instrumented
+    processing_time: null,
     law_count: byLaw.size,
     provision_count: rows.length,
     laws: [...byLaw.values()],
   };
 }
 
-/** Build a CSV of clauses in the compulsory-field structure. */
+// ── back-compat wrappers ────────────────────────────────────────────────────
+// index.ts's existing /export/clauses.csv and /export/round1.csv routes call
+// these two names directly. Keeping them (as thin exportCsv() calls) means the
+// registry refactor is a drop-in — no route changes required to ship this.
+
+/** The pre-refactor clauses.csv column set/order, preserved exactly for /export/clauses.csv. */
+const LEGACY_CLAUSES_COLUMNS = [
+  "economy", "lawName", "lawNumber", "level", "lastAmended", "clauseType", "actor",
+  "indicatorId", "indicatorFocus", "pillar", "articleSection", "locationReference",
+  "discoveryTag", "verbatimSnippet", "mappingRationale", "sourceUrl", "confidence",
+  "reviewNeeded", "notes", "ruleText",
+];
+
+/** Build a CSV of clauses in the compulsory-field structure (legacy 20-column layout). */
 export async function clausesCsv(filter: { jurisdiction?: string; type?: string; sourceId?: string } = {}): Promise<string> {
-  const rows = await loadClauses({ ...filter, limit: 10_000 });
-  const lines = [HEADERS.join(",")];
-  for (const c of rows) {
-    const ids = c.indicators ?? [];
-    const focuses = ids.map((id) => findIndicator(id)?.focus ?? "").filter(Boolean);
-    const pillars = [...new Set(ids.map((id) => findIndicator(id)?.pillar ?? "").filter(Boolean))];
-    const reviewNeeded = c.confidence != null && c.confidence < REVIEW_THRESHOLD ? "YES" : "";
-    lines.push([
-      c.jurisdiction, c.instrument, c.lawNumber, c.level, c.lastAmended,
-      c.type, c.actor, ids.join("; "), focuses.join("; "), pillars.join("; "),
-      c.citation, c.locationReference, c.discoveryTag,
-      c.sourceQuote, c.mappingRationale, c.url,
-      c.confidence != null ? c.confidence.toFixed(2) : "", reviewNeeded, c.notes, c.text,
-    ].map(esc).join(","));
-  }
-  return lines.join("\r\n");
+  return exportCsv({ source: "clauses", columns: LEGACY_CLAUSES_COLUMNS, filter });
+}
+
+/** Build the Round-1 submission CSV — exact 13-column ESCAP template (= DEFAULT_COLUMNS). */
+export async function round1Csv(filter: { economy?: string; indicator?: string; tag?: string } = {}): Promise<string> {
+  return exportCsv({ source: "validations", filter });
 }

@@ -175,6 +175,9 @@ export async function initDb(): Promise<void> {
       confidence        REAL,
       notes             TEXT,
       seed_json         TEXT,
+      coverage          TEXT,
+      timeframe         TEXT,
+      impact_comments   TEXT,
       created_at        INTEGER NOT NULL DEFAULT (unixepoch())
     );
     CREATE INDEX IF NOT EXISTS idx_validations_econ ON validations(economy);
@@ -189,6 +192,13 @@ export async function initDb(): Promise<void> {
   // migration: compulsory output fields (UN ESCAP output guide)
   for (const col of ["level", "law_number", "last_amended", "location_reference", "mapping_rationale", "discovery_tag", "notes"]) {
     try { await db.execute(`ALTER TABLE clauses ADD COLUMN ${col} TEXT`); } catch { /* already exists */ }
+  }
+  // migration: Coverage / Timeframe / Impact-or-Comments — previously only existed at the
+  // source/row level (markdown seed tables); now plumbed to the clause level so the export
+  // registry can populate them instead of leaving them blank.
+  for (const col of ["coverage", "timeframe", "impact_comments"]) {
+    try { await db.execute(`ALTER TABLE clauses ADD COLUMN ${col} TEXT`); } catch { /* already exists */ }
+    try { await db.execute(`ALTER TABLE validations ADD COLUMN ${col} TEXT`); } catch { /* already exists */ }
   }
 }
 
@@ -308,6 +318,9 @@ export interface ValidationRow {
   confidence?: number;       // 0..1 (exported High/Medium/Low)
   notes?: string;
   seed?: any;                // the original seed row (for audit)
+  coverage?: string;         // sectoral/subject-matter scope (e.g. "Cross-cutting", "Telecommunications services")
+  timeframe?: string;        // temporal scope (e.g. "Since 2023", "Since 1988, last amended 2024")
+  impactComments?: string;   // ESCAP "Impact or Comments on Acts or Practices" field
 }
 
 /** Replace all validation rows for a seed DB row (idempotent re-validation), or append if no dbRow. */
@@ -318,14 +331,16 @@ export async function saveValidations(rows: ValidationRow[], replaceDbRow?: stri
     stmts.push({
       sql: `INSERT INTO validations
         (id, db_row, economy, law_name, law_number, last_amended, indicator_id, article_section,
-         discovery_tag, verbatim, mapping_rationale, source_url, confidence, notes, seed_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         discovery_tag, verbatim, mapping_rationale, source_url, confidence, notes, seed_json,
+         coverage, timeframe, impact_comments)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?)`,
       args: [
         `val-${randomUUID().slice(0, 8)}`, r.dbRow ?? null, r.economy, r.lawName ?? null, r.lawNumber ?? null,
         r.lastAmended ?? null, r.indicatorId ?? null, r.articleSection ?? null, r.discoveryTag ?? null,
         r.verbatim ?? null, r.mappingRationale ?? null, r.sourceUrl ?? null,
         typeof r.confidence === "number" ? r.confidence : null, r.notes ?? null,
         r.seed ? JSON.stringify(r.seed) : null,
+        r.coverage ?? null, r.timeframe ?? null, r.impactComments ?? null,
       ],
     });
   }
@@ -341,6 +356,8 @@ function hydrateValidation(row: any): ValidationRow {
     verbatim: row.verbatim ?? undefined, mappingRationale: row.mapping_rationale ?? undefined,
     sourceUrl: row.source_url ?? undefined, confidence: row.confidence ?? undefined,
     notes: row.notes ?? undefined, seed: row.seed_json ? JSON.parse(row.seed_json) : undefined,
+    coverage: row.coverage ?? undefined, timeframe: row.timeframe ?? undefined,
+    impactComments: row.impact_comments ?? undefined,
   };
 }
 
@@ -641,6 +658,9 @@ export interface StoredClause {
   mappingRationale?: string; // why these indicators were assigned (persisted)
   discoveryTag?: string;     // flag for a substantive clause with no RDTII match ("new discovery")
   notes?: string;            // per-clause analyst note
+  coverage?: string;         // sectoral/subject-matter scope (e.g. "Cross-cutting", "Telecommunications services") — document-level, stamped per clause
+  timeframe?: string;        // temporal scope (e.g. "Since 2023", "Since 1988, last amended 2024") — document-level, stamped per clause
+  impactComments?: string;   // ESCAP "Impact or Comments on Acts or Practices" — per-clause
   penalty?: string;
   effectiveDate?: string;
   citation?: string;
@@ -660,8 +680,9 @@ export async function saveClauses(sourceId: string, clauses: StoredClause[]): Pr
     ...clauses.map((c) => ({
       sql: `INSERT INTO clauses
         (source_id, jurisdiction, instrument, url, type, text, actor, indicators, rdtii, penalty, effective_date, citation, source_quote, confidence, embedding,
-         level, law_number, last_amended, location_reference, mapping_rationale, discovery_tag, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?)`,
+         level, law_number, last_amended, location_reference, mapping_rationale, discovery_tag, notes,
+         coverage, timeframe, impact_comments)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?)`,
       args: [
         sourceId, c.jurisdiction, c.instrument, c.url, c.type, c.text,
         c.actor ?? null, JSON.stringify(c.indicators ?? []), JSON.stringify(c.rdtii ?? []), c.penalty ?? null,
@@ -669,6 +690,7 @@ export async function saveClauses(sourceId: string, clauses: StoredClause[]): Pr
         c.embedding && c.embedding.length ? encodeEmbedding(c.embedding) : null,
         c.level ?? null, c.lawNumber ?? null, c.lastAmended ?? null, c.locationReference ?? null,
         c.mappingRationale ?? null, c.discoveryTag ?? null, c.notes ?? null,
+        c.coverage ?? null, c.timeframe ?? null, c.impactComments ?? null,
       ],
     })),
   ];
@@ -692,6 +714,8 @@ function hydrateClause(row: any): StoredClause {
     lastAmended: row.last_amended ?? undefined, locationReference: row.location_reference ?? undefined,
     mappingRationale: row.mapping_rationale ?? undefined, discoveryTag: row.discovery_tag ?? undefined,
     notes: row.notes ?? undefined,
+    coverage: row.coverage ?? undefined, timeframe: row.timeframe ?? undefined,
+    impactComments: row.impact_comments ?? undefined,
     penalty: row.penalty ?? undefined, effectiveDate: row.effective_date ?? undefined,
     citation: row.citation ?? undefined, sourceQuote: row.source_quote ?? undefined,
     confidence: row.confidence ?? undefined,
