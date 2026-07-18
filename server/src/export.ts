@@ -3,7 +3,7 @@
 // join their indicator IDs with "; ". Confidence < REVIEW_THRESHOLD → Review Needed = YES.
 
 import { loadClauses, loadValidations, REVIEW_THRESHOLD, type StoredClause, type ValidationRow } from "./db.js";
-import { findIndicator } from "./indicators.js";
+import { findIndicator, findPillarIdByName, pillarName } from "./indicators.js";
 
 /** RFC-4180 field escaping: quote when the value contains a comma, quote, or newline. */
 function esc(v: unknown): string {
@@ -42,15 +42,22 @@ const COLUMN_REGISTRY: ColumnDef[] = [
     id: "pillarId", label: "Pillar_ID", group: "Context / Research Scope",
     getValue: (r) => {
       const ids = isValidationRow(r) ? (r.indicatorId ? [r.indicatorId] : []) : r.indicators ?? [];
-      return [...new Set(ids.map((id) => findIndicator(id)?.pillarId).filter((v): v is number => v != null))]
-        .join("; ");
+      const resolved = [...new Set(ids.map((id) => findIndicator(id)?.pillarId).filter((v): v is number => v != null))];
+      if (resolved.length) return resolved.join("; ");
+      // Fallback: no indicator resolved — try the seed's pillar label directly (Path B: user
+      // supplied a pillar, not a specific indicator id).
+      const fallback = isValidationRow(r) ? findPillarIdByName(r.seed?.pillar) : undefined;
+      return fallback != null ? String(fallback) : "";
     },
   },
   {
     id: "pillar", label: "Pillar", group: "Context / Research Scope",
     getValue: (r) => {
       const ids = isValidationRow(r) ? (r.indicatorId ? [r.indicatorId] : []) : r.indicators ?? [];
-      return [...new Set(ids.map((id) => findIndicator(id)?.pillar ?? "").filter(Boolean))].join("; ");
+      const resolved = [...new Set(ids.map((id) => findIndicator(id)?.pillar ?? "").filter(Boolean))];
+      if (resolved.length) return resolved.join("; ");
+      const fallback = isValidationRow(r) ? findPillarIdByName(r.seed?.pillar) : undefined;
+      return fallback != null ? pillarName(fallback) : "";
     },
   },
   {

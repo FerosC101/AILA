@@ -79,6 +79,34 @@ export const RDTII_INDICATORS: RdtiiIndicator[] = [
 
 const BY_ID = new Map(RDTII_INDICATORS.map((i) => [i.id, i]));
 export const INDICATOR_IDS = RDTII_INDICATORS.map((i) => i.id);
-export const isIndicatorId = (id: string): boolean => BY_ID.has(id);
-export const findIndicator = (id: string): RdtiiIndicator | undefined => BY_ID.get(id);
+
+/**
+ * Normalize a candidate indicator id to the canonical "P#-I#" form before lookup.
+ * Tolerates case ("p7-i2"), stray whitespace ("P7 - I2"), and the seed's
+ * numeric dot form ("7.2" → "P7-I2"). Returns undefined if it can't be resolved
+ * to a real id — never guesses.
+ */
+function normalizeIndicatorId(id: string): string | undefined {
+  const raw = id.trim();
+  if (BY_ID.has(raw)) return raw;
+  const compact = raw.toUpperCase().replace(/\s+/g, "");
+  const asPI = compact.replace(/^P?(\d+)[.\-_]?I?(\d+)$/, "P$1-I$2");
+  if (BY_ID.has(asPI)) return asPI;
+  return undefined;
+}
+
+export const isIndicatorId = (id: string): boolean => normalizeIndicatorId(id) !== undefined;
+export const findIndicator = (id: string): RdtiiIndicator | undefined => {
+  const norm = normalizeIndicatorId(id);
+  return norm ? BY_ID.get(norm) : undefined;
+};
 export const pillarName = (pid: number): string => RDTII_PILLARS[pid] ?? String(pid);
+
+const PILLAR_ID_BY_NAME = new Map(
+  Object.entries(RDTII_PILLARS).map(([pid, name]) => [name.toLowerCase(), Number(pid)]),
+);
+/** Reverse lookup: pillar label → pillarId, for rows that only supply a pillar name. */
+export function findPillarIdByName(name: string | undefined | null): number | undefined {
+  if (!name) return undefined;
+  return PILLAR_ID_BY_NAME.get(name.trim().toLowerCase());
+}

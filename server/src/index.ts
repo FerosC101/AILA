@@ -18,6 +18,7 @@ import { extractSource, extractorEnabled, extractAll, batchStatus, extractZone1 
 import { analyzeDocument } from "./engine.js";
 import { processUpload } from "./upload.js";
 import { clausesCsv, round1Csv, round1Json, listColumns, DEFAULT_COLUMNS, exportCsv, exportJson } from "./export.js";
+import { normalizeEconomy } from "./economy.js";
 import { costStatus } from "./cost.js";
 import { classifyAuthority } from "./authority.js";
 import { validateSeedRow, validateAll, validateStatus, validatorEnabled, type SeedRow } from "./validate.js";
@@ -293,8 +294,9 @@ app.get("/cost", (_req, res) => res.json(costStatus()));
 /** POST /validate — validate ONE seed database row. Body: SeedRow { economy, lawName?, indicators?, ... }. */
 app.post("/validate", async (req, res) => {
   if (!validatorEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
-  const seed = req.body ?? {};
+  const seed = { ...(req.body ?? {}) };
   if (!seed.economy) return res.status(400).json({ error: "economy is required." });
+  seed.economy = normalizeEconomy(seed.economy);
   try {
     res.json({ seed: { dbRow: seed.dbRow, economy: seed.economy }, provisions: await validateSeedRow(seed as SeedRow) });
   } catch (err) {

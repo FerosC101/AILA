@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import type { SeedRow } from "../src/validate.js";
+import { normalizeEconomy } from "../src/economy.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 try {
@@ -56,11 +57,11 @@ const pick = (o: any, ...keys: string[]) => { for (const k of keys) if (o[k] != 
 
 /** Map an arbitrary seed record (SeedRow or CrawlerSeed columns) → SeedRow. */
 function toSeed(o: any, idx: number): SeedRow {
-  if (o.economy) return { dbRow: o.dbRow ?? idx + 1, ...o };
+  if (o.economy) return { dbRow: o.dbRow ?? idx + 1, ...o, economy: normalizeEconomy(o.economy)! };
   const ind = pick(o, "indicator_id_fmt", "indicator_id", "Indicator ID", "indicatorId");
   return {
     dbRow: pick(o, "Row", "row", "dbRow") ?? idx + 1,
-    economy: pick(o, "Country", "Economy", "economy"),
+    economy: normalizeEconomy(pick(o, "Country", "Economy", "economy"))!,
     lawName: pick(o, "Act / Practice", "Act/Practice", "Law Name", "lawName"),
     lawNumber: pick(o, "Law Number / Ref", "Law Number", "lawNumber"),
     indicators: ind ? [String(ind)] : undefined,
