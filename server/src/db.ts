@@ -177,6 +177,10 @@ export async function initDb(): Promise<void> {
       seed_json         TEXT,
       raw_context       TEXT,
       processing_ms     INTEGER,
+      coverage          TEXT,
+      timeframe         TEXT,
+      impact_comments   TEXT,
+      level             TEXT,
       created_at        INTEGER NOT NULL DEFAULT (unixepoch())
     );
     CREATE INDEX IF NOT EXISTS idx_validations_econ ON validations(economy);
@@ -196,6 +200,17 @@ export async function initDb(): Promise<void> {
   for (const col of ["level", "law_number", "last_amended", "location_reference", "mapping_rationale", "discovery_tag", "notes"]) {
     try { await db.execute(`ALTER TABLE clauses ADD COLUMN ${col} TEXT`); } catch { /* already exists */ }
   }
+  // migration: Coverage / Timeframe / Impact-or-Comments — previously only existed at the
+  // source/row level (markdown seed tables); now plumbed to the clause level so the export
+  // registry can populate them instead of leaving them blank.
+  for (const col of ["coverage", "timeframe", "impact_comments"]) {
+    try { await db.execute(`ALTER TABLE clauses ADD COLUMN ${col} TEXT`); } catch { /* already exists */ }
+    try { await db.execute(`ALTER TABLE validations ADD COLUMN ${col} TEXT`); } catch { /* already exists */ }
+  }
+  // migration: Level — validations previously had no legal-hierarchy field at all
+  // (Act | Regulation | Amendment | ...); now filled via clauses cross-reference
+  // in validate.ts (extract.ts already captures it per clause for the same law).
+  try { await db.execute("ALTER TABLE validations ADD COLUMN level TEXT"); } catch { /* already exists */ }
 }
 
 // ── Versions (semantic version control) ────────────────────────────────────────
@@ -304,6 +319,7 @@ export interface ValidationRow {
   economy: string;
   lawName?: string;
   lawNumber?: string;
+  level?: string;            // legal hierarchy: Act | Regulation | Amendment | Sector Code | ... — backfilled via clauses cross-reference, validate.ts's own prompt doesn't ask for it
   lastAmended?: string;
   indicatorId?: string;      // P#-I#
   articleSection?: string;
@@ -316,6 +332,9 @@ export interface ValidationRow {
   seed?: any;                // the original seed row (for audit)
   rawContext?: string;       // surrounding source text around the verbatim (HITL review)
   processingMs?: number;     // wall-clock time to validate the seed row
+  coverage?: string;         // sectoral/subject-matter scope (e.g. "Cross-cutting", "Telecommunications services")
+  timeframe?: string;        // temporal scope (e.g. "Since 2023", "Since 1988, last amended 2024")
+  impactComments?: string;   // ESCAP "Impact or Comments on Acts or Practices" field
 }
 
 /** Replace all validation rows for a seed DB row (idempotent re-validation), or append if no dbRow. */
@@ -326,8 +345,9 @@ export async function saveValidations(rows: ValidationRow[], replaceDbRow?: stri
     stmts.push({
       sql: `INSERT INTO validations
         (id, db_row, economy, law_name, law_number, last_amended, indicator_id, article_section,
-         discovery_tag, verbatim, mapping_rationale, source_url, confidence, notes, seed_json, raw_context, processing_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         discovery_tag, verbatim, mapping_rationale, source_url, confidence, notes, seed_json,
+         raw_context, processing_ms, coverage, timeframe, impact_comments, level)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?)`,
       args: [
         `val-${randomUUID().slice(0, 8)}`, r.dbRow ?? null, r.economy, r.lawName ?? null, r.lawNumber ?? null,
         r.lastAmended ?? null, r.indicatorId ?? null, r.articleSection ?? null, r.discoveryTag ?? null,
@@ -335,6 +355,7 @@ export async function saveValidations(rows: ValidationRow[], replaceDbRow?: stri
         typeof r.confidence === "number" ? r.confidence : null, r.notes ?? null,
         r.seed ? JSON.stringify(r.seed) : null,
         r.rawContext ?? null, typeof r.processingMs === "number" ? r.processingMs : null,
+        r.coverage ?? null, r.timeframe ?? null, r.impactComments ?? null, r.level ?? null,
       ],
     });
   }
@@ -345,12 +366,15 @@ function hydrateValidation(row: any): ValidationRow {
   return {
     id: row.id, dbRow: row.db_row ?? undefined, economy: row.economy,
     lawName: row.law_name ?? undefined, lawNumber: row.law_number ?? undefined,
+    level: row.level ?? undefined,
     lastAmended: row.last_amended ?? undefined, indicatorId: row.indicator_id ?? undefined,
     articleSection: row.article_section ?? undefined, discoveryTag: row.discovery_tag ?? undefined,
     verbatim: row.verbatim ?? undefined, mappingRationale: row.mapping_rationale ?? undefined,
     sourceUrl: row.source_url ?? undefined, confidence: row.confidence ?? undefined,
     notes: row.notes ?? undefined, seed: row.seed_json ? JSON.parse(row.seed_json) : undefined,
     rawContext: row.raw_context ?? undefined, processingMs: row.processing_ms ?? undefined,
+    coverage: row.coverage ?? undefined, timeframe: row.timeframe ?? undefined,
+    impactComments: row.impact_comments ?? undefined,
   };
 }
 
@@ -651,6 +675,9 @@ export interface StoredClause {
   mappingRationale?: string; // why these indicators were assigned (persisted)
   discoveryTag?: string;     // flag for a substantive clause with no RDTII match ("new discovery")
   notes?: string;            // per-clause analyst note
+  coverage?: string;         // sectoral/subject-matter scope (e.g. "Cross-cutting", "Telecommunications services") — document-level, stamped per clause
+  timeframe?: string;        // temporal scope (e.g. "Since 2023", "Since 1988, last amended 2024") — document-level, stamped per clause
+  impactComments?: string;   // ESCAP "Impact or Comments on Acts or Practices" — per-clause
   penalty?: string;
   effectiveDate?: string;
   citation?: string;
@@ -670,8 +697,9 @@ export async function saveClauses(sourceId: string, clauses: StoredClause[]): Pr
     ...clauses.map((c) => ({
       sql: `INSERT INTO clauses
         (source_id, jurisdiction, instrument, url, type, text, actor, indicators, rdtii, penalty, effective_date, citation, source_quote, confidence, embedding,
-         level, law_number, last_amended, location_reference, mapping_rationale, discovery_tag, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?)`,
+         level, law_number, last_amended, location_reference, mapping_rationale, discovery_tag, notes,
+         coverage, timeframe, impact_comments)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?)`,
       args: [
         sourceId, c.jurisdiction, c.instrument, c.url, c.type, c.text,
         c.actor ?? null, JSON.stringify(c.indicators ?? []), JSON.stringify(c.rdtii ?? []), c.penalty ?? null,
@@ -679,6 +707,7 @@ export async function saveClauses(sourceId: string, clauses: StoredClause[]): Pr
         c.embedding && c.embedding.length ? encodeEmbedding(c.embedding) : null,
         c.level ?? null, c.lawNumber ?? null, c.lastAmended ?? null, c.locationReference ?? null,
         c.mappingRationale ?? null, c.discoveryTag ?? null, c.notes ?? null,
+        c.coverage ?? null, c.timeframe ?? null, c.impactComments ?? null,
       ],
     })),
   ];
@@ -702,6 +731,8 @@ function hydrateClause(row: any): StoredClause {
     lastAmended: row.last_amended ?? undefined, locationReference: row.location_reference ?? undefined,
     mappingRationale: row.mapping_rationale ?? undefined, discoveryTag: row.discovery_tag ?? undefined,
     notes: row.notes ?? undefined,
+    coverage: row.coverage ?? undefined, timeframe: row.timeframe ?? undefined,
+    impactComments: row.impact_comments ?? undefined,
     penalty: row.penalty ?? undefined, effectiveDate: row.effective_date ?? undefined,
     citation: row.citation ?? undefined, sourceQuote: row.source_quote ?? undefined,
     confidence: row.confidence ?? undefined,
@@ -725,6 +756,48 @@ export async function loadClauses(filter: { jurisdiction?: string; type?: string
 export async function getClauseCount(): Promise<number> {
   const res = await db.execute("SELECT COUNT(*) as n FROM clauses");
   return Number((res.rows[0] as any).n);
+}
+
+/**
+ * Best-effort cross-reference: given an economy + law name from the validation
+ * pipeline, look up whatever extract.ts already captured for the same law
+ * (level, law number, last amended, coverage, timeframe) and return it. Zero
+ * Gemini cost — this is data already sitting in the clauses table from a
+ * different pipeline, not a new extraction. Exact instrument-name match first;
+ * falls back to a substring match either direction since seed law names are
+ * often shorter/longer than the officially extracted title (e.g. "Data
+ * Protection Act" vs "Personal Data Protection Act 2010"). When multiple
+ * clauses match, uses majority vote per field so one mis-tagged clause
+ * doesn't skew the result. Returns undefined (never a guess) when nothing
+ * matches, and only includes the fields that actually resolved.
+ */
+export async function crossRefClauseFields(
+  jurisdiction: string | undefined,
+  lawName: string | undefined,
+): Promise<{ level?: string; lawNumber?: string; lastAmended?: string; coverage?: string; timeframe?: string } | undefined> {
+  if (!jurisdiction || !lawName) return undefined;
+  const res = await db.execute({
+    sql: `SELECT level, law_number, last_amended, coverage, timeframe, instrument FROM clauses
+          WHERE LOWER(jurisdiction) = ?
+            AND (LOWER(instrument) = LOWER(?) OR LOWER(instrument) LIKE '%' || LOWER(?) || '%' OR LOWER(?) LIKE '%' || LOWER(instrument) || '%')
+          LIMIT 50`,
+    args: [jurisdiction.toLowerCase(), lawName, lawName, lawName],
+  });
+  const rows = res.rows as any[];
+  if (!rows.length) return undefined;
+
+  const mode = (field: string): string | undefined => {
+    const counts = new Map<string, number>();
+    for (const r of rows) { const v = r[field]; if (v) counts.set(v, (counts.get(v) ?? 0) + 1); }
+    let best: string | undefined, bestN = 0;
+    for (const [v, n] of counts) if (n > bestN) { best = v; bestN = n; }
+    return best;
+  };
+  const result = {
+    level: mode("level"), lawNumber: mode("law_number"), lastAmended: mode("last_amended"),
+    coverage: mode("coverage"), timeframe: mode("timeframe"),
+  };
+  return (result.level || result.lawNumber || result.lastAmended || result.coverage || result.timeframe) ? result : undefined;
 }
 
 // ── Stats (health endpoint / dashboard) ───────────────────────────────────────

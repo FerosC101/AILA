@@ -23,3 +23,9 @@ export const DISCOVERY_TAGS = `DISCOVERY TAG — classify each provision against
 - UPDATED: the law exists but has newer amendments, revised wording, renumbered sections, or consolidation.
 - NEW: a provision/instrument you independently discovered that satisfies the same indicator but is not in the seed.
 - INVALID: the seed provision is repealed, superseded, obsolete, incorrectly cited, or incorrectly mapped (explain why).`;
+
+
+export const METADATA_RULES = `INSTRUMENT METADATA RULES:
+- lastAmended: the most recent LEGALLY EFFECTIVE amendment only. Ignore proposed amendments and draft bills entirely — they are not "amendments" until in force. If the instrument has never been amended, return exactly "Original Version". Return a year or an official amendment reference (e.g. "Act 709 (2020 Amendment)"), never a full sentence.
+- coverage: the sectoral/subject-matter scope. Return "Cross-cutting" ONLY when the text itself states or clearly implies the instrument applies broadly (e.g. "applies to all sectors", "any person", no sectoral limitation stated) — do NOT use "Cross-cutting" as a default guess when scope is simply unclear. If scope cannot be determined from the text, return null and flag it in notes.
+- timeframe: the instrument's own temporal scope as stated (e.g. "Since 2023"). Do NOT restate the lastAmended value inside timeframe — they are separate fields; keep timeframe to the ENACTMENT/effective date context only.`;

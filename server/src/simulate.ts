@@ -180,7 +180,15 @@ ${facts}`;
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3 } }),
   });
-  if (!res.ok) return undefined;
+  if (!res.ok) {
+  const t = await res.text();
+  if (res.status === 429) {
+    console.error(`[Tag] Gemini rate limit reached (429) for model "${model}". ...`);
+  } else {
+    console.error(`[Tag] Gemini error ${res.status}:`, t.slice(0, 400));
+  }
+  // then either throw (classify/extract) or return undefined (simulate, which already degrades gracefully)
+}
   const data: any = await res.json();
   recordGeminiUsage(model, data);
   return data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();

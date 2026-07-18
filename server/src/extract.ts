@@ -64,7 +64,10 @@ export function windowDocument(text: string): string[] {
 
 /** Fill missing document-level fields from later windows (first non-empty wins). */
 function mergeDoc(a: RawDoc, b: RawDoc): RawDoc {
-  return { level: a.level ?? b.level, lawNumber: a.lawNumber ?? b.lawNumber, lastAmended: a.lastAmended ?? b.lastAmended };
+  return {
+    level: a.level ?? b.level, lawNumber: a.lawNumber ?? b.lawNumber, lastAmended: a.lastAmended ?? b.lastAmended,
+    coverage: a.coverage ?? b.coverage, timeframe: a.timeframe ?? b.timeframe,
+  };
 }
 
 /** De-duplicate clauses by normalized text (windows overlap) and cap the total. */
@@ -101,9 +104,9 @@ const SUBSTANTIVE = new Set(["obligation", "restriction", "exception", "penalty"
 interface RawClause {
   type: string; text: string; actor?: string; indicators?: string[];
   penalty?: string; effectiveDate?: string; citation?: string; sourceQuote?: string; confidence?: number;
-  locationReference?: string; mappingRationale?: string; notes?: string;
+  locationReference?: string; mappingRationale?: string; notes?: string; impactComments?: string;
 }
-interface RawDoc { level?: string; lawNumber?: string; lastAmended?: string }
+interface RawDoc { level?: string; lawNumber?: string; lastAmended?: string; coverage?: string; timeframe?: string }
 
 /** Optional guidance that biases extraction toward a pillar / indicator (P2-5). */
 export interface ExtractHint { pillarId?: number; indicatorId?: string }
@@ -144,10 +147,12 @@ function toStoredClause(
     type: c.type, text: c.text.trim(), actor: c.actor || undefined,
     indicators, rdtii,
     level: doc.level, lawNumber: doc.lawNumber, lastAmended: doc.lastAmended,
+    coverage: doc.coverage, timeframe: doc.timeframe,
     locationReference: c.locationReference || undefined,
     mappingRationale: c.mappingRationale || undefined,
     discoveryTag,
     notes: c.notes || undefined,
+    impactComments: c.impactComments || undefined,
     penalty: c.penalty || undefined,
     effectiveDate: c.effectiveDate || undefined,
     citation: c.citation || undefined,
@@ -165,6 +170,8 @@ First describe the DOCUMENT as a whole ("document"):
 - "level": the legal hierarchy — one of ${JSON.stringify(LEGAL_LEVELS)}
 - "lawNumber": the act/decree/law number if present (e.g. "Act 709", "R.A. 10173"), else null
 - "lastAmended": when the instrument was LAST amended if stated (not when it started), else null
+- "coverage": the sectoral/subject-matter scope — e.g. "Cross-cutting", "Telecommunications services", "Personal Health Data", "Financial sector" — else "Cross-cutting" if the instrument applies broadly
+- "timeframe": the instrument's temporal scope as stated in the text, e.g. "Since 2023", "Since 1988, last amended in 2024", else null
 
 Then extract the most important regulatory clauses as structured atoms (max 12). For each clause:
 - "type": one of ${JSON.stringify(CLAUSE_TYPES)}
@@ -178,6 +185,7 @@ Then extract the most important regulatory clauses as structured atoms (max 12).
 - "effectiveDate": if stated, else null
 - "sourceQuote": a SHORT verbatim quote (<=200 chars) from the document supporting this clause
 - "notes": a brief analyst note if useful (e.g. ambiguity, cross-reference), else null
+- "impactComments": one short sentence on the practical impact of this clause on cross-border digital trade or compliance (e.g. "Raises compliance cost for foreign processors" or "Narrow exception limits its restrictive effect"), else null
 - "confidence": 0-1
 
 Only extract clauses actually grounded in the DOCUMENT text. Do not invent. If boilerplate/navigation, return an empty clauses list.
@@ -207,6 +215,8 @@ Return ONLY JSON: {"document":{...},"clauses":[ ... ]}`;
     level: LEGAL_LEVELS.includes(d.level) ? d.level : undefined,
     lawNumber: typeof d.lawNumber === "string" ? d.lawNumber : undefined,
     lastAmended: typeof d.lastAmended === "string" ? d.lastAmended : undefined,
+    coverage: typeof d.coverage === "string" ? d.coverage : undefined,
+    timeframe: typeof d.timeframe === "string" ? d.timeframe : undefined,
   };
   return { doc, clauses: Array.isArray(parsed.clauses) ? parsed.clauses : [] };
 }

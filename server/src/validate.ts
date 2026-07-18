@@ -11,7 +11,7 @@ import { searchWeb } from "./websearch.js";
 import { classifyAuthority } from "./authority.js";
 import { RDTII_INDICATORS, isIndicatorId, findIndicator } from "./indicators.js";
 import { recordGeminiUsage } from "./cost.js";
-import { saveValidations, type ValidationRow, type DiscoveryTag } from "./db.js";
+import { saveValidations, crossRefClauseFields, type ValidationRow, type DiscoveryTag } from "./db.js";
 
 const INDICATOR_CATALOG = RDTII_INDICATORS.map((i) => `${i.id} (P${i.pillarId} ${i.pillar}): ${i.focus}`).join("\n");
 const TAGS: DiscoveryTag[] = ["VERIFIED", "UPDATED", "NEW", "INVALID"];
@@ -24,9 +24,12 @@ export interface SeedRow {
   economy: string;
   lawName?: string;
   lawNumber?: string;
-  indicators?: string[];   // P#-I#
+  lastAmended?: string; 
+  coverage?: string; 
+  timeframe?: string;
+  indicators?: string[];
   pillar?: string;
-  context?: string;        // policy focus / coverage / notes from the seed
+  context?: string;
   seedUrl?: string;
 }
 
@@ -89,6 +92,8 @@ async function callGemini(seed: SeedRow, sources: { url: string; text: string }[
   const seedBlock = `SEED DATABASE ROW (context only — NOT authoritative):
 - Economy: ${seed.economy}
 - Law (as in DB): ${seed.lawName ?? "—"} ${seed.lawNumber ? `(${seed.lawNumber})` : ""}
+- Last Amended (as in DB, verify — do not trust blindly): ${seed.lastAmended ?? "—"}
+- Coverage (as in DB): ${seed.coverage ?? "—"}
 - Indicator(s) to test: ${(seed.indicators ?? []).join(", ") || "—"}
 - Pillar/topic: ${seed.pillar ?? "—"}
 - Context/notes: ${seed.context ?? "—"}`;
@@ -115,6 +120,9 @@ For each relevant provision return an object:
 - "sourceIndex": the [S#] number the provision came from (1-based), or null
 - "confidence": 0-1 (High≈0.85+, Medium≈0.5-0.85, Low<0.5)
 - "notes": validation findings, amendment/version discrepancies, or why text couldn't be retrieved
+- "coverage": the instrument's sectoral/subject-matter scope — e.g. "Cross-cutting", "Telecommunications services", "Personal Health Data", "Financial sector" — else "Cross-cutting" if it applies broadly
+- "timeframe": the instrument's temporal scope as stated in the source, e.g. "Since 2023", "Since 1988, last amended in 2024", else null
+- "impactComments": one short sentence on the practical impact of this provision on cross-border digital trade or compliance (e.g. "Raises compliance cost for foreign processors"), else null
 
 Extract up to ${MAX_PROVISIONS}. A provision mapping to several indicators → one object per indicator.
 Do NOT use INVALID merely because exact verbatim text could not be retrieved — use INVALID ONLY when there is positive evidence the seed law/section is repealed, superseded, or mis-cited. If the law is confirmed to exist and apply but you could not pin the exact section text, use VERIFIED (or UPDATED) with LOWER confidence and a Notes flag, and leave verbatim "".
@@ -173,13 +181,15 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
 
   let rows: ValidationRow[] = [];
   if (!sources.length) {
-    // No official source retrievable — flag, don't invent (mirrors the PDF's discipline).
     rows = (seed.indicators?.length ? seed.indicators : [undefined]).map((ind) => ({
       dbRow, economy: seed.economy, lawName: seed.lawName, lawNumber: seed.lawNumber,
-      indicatorId: ind, discoveryTag: undefined, verbatim: "",  // unretrievable ≠ INVALID — leave blank, flag it
+      indicatorId: ind, discoveryTag: undefined, verbatim: "",
       mappingRationale: undefined, sourceUrl: seed.seedUrl, confidence: 0.2,
       notes: "Flagged, not populated — no official source retrievable this session (portal block / dead link). Needs manual fetch.",
       seed,
+      lastAmended: seed.lastAmended || undefined,
+      coverage: seed.coverage || seed.context || undefined,
+      timeframe: seed.timeframe || undefined,
     }));
   } else {
     const provisions = await callGemini(seed, sources);
@@ -212,12 +222,35 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
           sourceUrl, confidence: typeof p.confidence === "number" ? Math.max(0, Math.min(1, p.confidence)) : 0.5,
           notes, seed,
           rawContext: contextAround(srcText, verbatim),
+          coverage: typeof p.coverage === "string" && p.coverage ? p.coverage : (seed.context || undefined),
+          timeframe: typeof p.timeframe === "string" && p.timeframe ? p.timeframe : undefined,
+          impactComments: typeof p.impactComments === "string" && p.impactComments ? p.impactComments : undefined,
         } as ValidationRow;
       });
     if (!rows.length) {
       rows = [{ dbRow, economy: seed.economy, lawName: seed.lawName, lawNumber: seed.lawNumber,
         indicatorId: seed.indicators?.[0], discoveryTag: undefined, verbatim: "", confidence: 0.25,
-        notes: "Sources retrieved but no provision could be validated for the seed indicator(s). Needs manual review.", seed }];
+        notes: "Sources retrieved but no provision could be validated for the seed indicator(s). Needs manual review.", seed,
+        coverage: seed.context || undefined }];
+    }
+  }
+
+  // Cross-reference against already-extracted clauses for the same law — zero
+  // Gemini cost, fills gaps this pipeline's own prompt doesn't reliably return
+  // (Level especially: not asked for above at all). Only fills blanks, never
+  // overwrites what Gemini/the seed already gave us. Cached per unique law
+  // name within this batch since several provisions usually share one law.
+  const xrefCache = new Map<string, Awaited<ReturnType<typeof crossRefClauseFields>>>();
+  for (const row of rows) {
+    const key = `${row.economy.toLowerCase()}::${(row.lawName ?? "").toLowerCase()}`;
+    if (!xrefCache.has(key)) xrefCache.set(key, await crossRefClauseFields(row.economy, row.lawName));
+    const xref = xrefCache.get(key);
+    if (xref) {
+      if (!row.level) row.level = xref.level;
+      if (!row.lawNumber) row.lawNumber = xref.lawNumber;
+      if (!row.lastAmended) row.lastAmended = xref.lastAmended;
+      if (!row.coverage) row.coverage = xref.coverage;
+      if (!row.timeframe) row.timeframe = xref.timeframe;
     }
   }
 
