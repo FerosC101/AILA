@@ -292,11 +292,14 @@ export async function round1Json(filter: { economy?: string; indicator?: string;
     if (!byLaw.has(key)) byLaw.set(key, {
       economy: r.economy, law_name: r.lawName ?? null, law_number: r.lawNumber ?? null,
       last_amended: r.lastAmended ?? null, source_url: r.sourceUrl ?? null,
-      source_pdf_path: null, ocr_quality_cer: null,   // require local-PDF caching + a CER metric (not built)
+      source_pdf_path: r.sourcePdfPath ?? null,      // local path to the cached retrieved source
+      ocr_quality_cer: r.ocrCer ?? null,             // OCR character-error-rate estimate (null if not OCR'd)
       processing_time: null as number | null,
       provisions: [] as any[],
     });
     const law = byLaw.get(key);
+    if (r.sourcePdfPath && !law.source_pdf_path) law.source_pdf_path = r.sourcePdfPath;
+    if (typeof r.ocrCer === "number" && law.ocr_quality_cer == null) law.ocr_quality_cer = r.ocrCer;
     law.provisions.push({
       indicator_id: COLUMN_BY_ID.get("indicatorId")!.getValue(r) || null,
       article_section: COLUMN_BY_ID.get("articleSection")!.getValue(r) || null,

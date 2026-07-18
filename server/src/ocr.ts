@@ -154,12 +154,13 @@ async function runTesseract(
 
   let worker = await getWorker(lang);
   const pageTexts: string[] = [];
+  const confidences: number[] = [];
 
   for (let i = 0; i < pngPages.length; i++) {
     try {
       const { data } = await worker.recognize(pngPages[i]);
       const t = data.text.replace(/\s+/g, " ").trim();
-      if (t.length > 20) pageTexts.push(t);
+      if (t.length > 20) { pageTexts.push(t); if (typeof data.confidence === "number") confidences.push(data.confidence); }
     } catch (err) {
       console.warn(`[OCR] Page ${i + 1} recognition failed for ${sourceId} (${lang}):`, err instanceof Error ? err.message : err);
       // Worker may be corrupted — drop it so the next page/job recreates it
@@ -170,11 +171,23 @@ async function runTesseract(
 
   if (!pageTexts.length) return null;
 
+  // record OCR quality: Tesseract mean word-confidence (0–100) → CER estimate (0–1, lower is better)
+  if (confidences.length) recordOcrCer(sourceId, confidences.reduce((a, b) => a + b, 0) / confidences.length);
+
   const result = pageTexts.join(" ").replace(/\s+/g, " ").trim();
   console.log(`[OCR] Extracted ${result.length} chars across ${pngPages.length} page(s) for ${sourceId} (${lang})`);
   await saveTranslation(sourceId, OCR_CACHE_KEY, result);
   return result.slice(0, maxChars);
 }
+
+// ── OCR quality (character-error-rate estimate per source) ─────────────────────
+// Tesseract reports a mean word confidence (0–100); we store CER ≈ (100 − conf)/100.
+const _ocrCer = new Map<string, number>();
+function recordOcrCer(sourceId: string, meanConfidence: number): void {
+  _ocrCer.set(sourceId, Number(Math.max(0, Math.min(1, (100 - meanConfidence) / 100)).toFixed(3)));
+}
+/** CER estimate for a source id, or undefined if OCR never ran on it. */
+export function getOcrCer(sourceId: string): number | undefined { return _ocrCer.get(sourceId); }
 
 // ── public API ────────────────────────────────────────────────────────────────
 
@@ -230,6 +243,7 @@ export async function ocrImage(imageBuffer: Uint8Array, id: string, maxChars = 1
         const worker = await getWorker(lang);
         const { data } = await worker.recognize(Buffer.from(imageBuffer));
         const text = data.text.replace(/\s+/g, " ").trim();
+        if (typeof data.confidence === "number") recordOcrCer(id, data.confidence);
         console.log(`[OCR] Image ${id}: ${text.length} chars`);
         resolve(text.length > 10 ? text.slice(0, maxChars) : null);
       } catch (err) {

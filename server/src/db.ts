@@ -151,10 +151,13 @@ export async function initDb(): Promise<void> {
       verdict         TEXT,
       confidence      REAL,
       payload         TEXT NOT NULL,
+      kind            TEXT DEFAULT 'answer',
       created_at      INTEGER NOT NULL DEFAULT (unixepoch())
     );
     CREATE INDEX IF NOT EXISTS idx_articles_conv ON articles(conversation_id, created_at);
   `);
+  // migration: article kind ('answer' | 'simulation') so saved simulations render + feed context
+  try { await db.execute("ALTER TABLE articles ADD COLUMN kind TEXT DEFAULT 'answer'"); } catch { /* already exists */ }
 
   // AILA v5 provision-validation output — one row per validated legal provision,
   // traceable to the originating Round-1 database row (the 13-column ESCAP template).
@@ -181,6 +184,8 @@ export async function initDb(): Promise<void> {
       timeframe         TEXT,
       impact_comments   TEXT,
       level             TEXT,
+      source_pdf_path   TEXT,
+      ocr_cer           REAL,
       created_at        INTEGER NOT NULL DEFAULT (unixepoch())
     );
     CREATE INDEX IF NOT EXISTS idx_validations_econ ON validations(economy);
@@ -188,7 +193,7 @@ export async function initDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_validations_tag  ON validations(discovery_tag);
   `);
   // migration: supplementary-JSON metadata (older DBs created validations without these)
-  for (const col of ["raw_context TEXT", "processing_ms INTEGER"]) {
+  for (const col of ["raw_context TEXT", "processing_ms INTEGER", "source_pdf_path TEXT", "ocr_cer REAL"]) {
     try { await db.execute(`ALTER TABLE validations ADD COLUMN ${col}`); } catch { /* already exists */ }
   }
 
@@ -250,7 +255,7 @@ export async function getVersionHistory(sourceId: string): Promise<Array<{ id: n
 
 // ── Conversations & articles (chatbot memory) ─────────────────────────────────
 
-export interface ArticleRow { id: string; conversationId: string; question: string; summary: string; verdict?: string; confidence?: number; payload: any; createdAt: number }
+export interface ArticleRow { id: string; conversationId: string; question: string; summary: string; verdict?: string; confidence?: number; kind?: "answer" | "simulation"; payload: any; createdAt: number }
 export interface ConversationRow { id: string; title: string; createdAt: number; updatedAt: number; articleCount?: number }
 
 /** Create a conversation (title = first question, trimmed). Returns its id. */
@@ -260,14 +265,14 @@ export async function createConversation(title: string): Promise<string> {
   return id;
 }
 
-/** Persist an answer as an article in a conversation, and bump the conversation's updated_at. */
-export async function saveArticle(conversationId: string, question: string, result: any): Promise<string> {
+/** Persist an answer or simulation as an article in a conversation, and bump updated_at. */
+export async function saveArticle(conversationId: string, question: string, result: any, kind: "answer" | "simulation" = "answer"): Promise<string> {
   const id = `art-${randomUUID().slice(0, 8)}`;
   await db.batch([
-    { sql: `INSERT INTO articles (id, conversation_id, question, summary, verdict, confidence, payload)
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    { sql: `INSERT INTO articles (id, conversation_id, question, summary, verdict, confidence, payload, kind)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [id, conversationId, question, String(result.summary ?? "").slice(0, 2000),
-        result.verdict ?? null, typeof result.confidence === "number" ? result.confidence : null, JSON.stringify(result)] },
+        result.verdict ?? null, typeof result.confidence === "number" ? result.confidence : null, JSON.stringify(result), kind] },
     { sql: "UPDATE conversations SET updated_at = unixepoch() WHERE id = ?", args: [conversationId] },
   ], "write");
   return id;
@@ -284,15 +289,21 @@ export async function listConversations(limit = 50): Promise<ConversationRow[]> 
   return res.rows.map((r: any) => ({ id: r.id, title: r.title, createdAt: Number(r.created_at), updatedAt: Number(r.updated_at), articleCount: Number(r.n) }));
 }
 
-/** A conversation with its ordered articles (lightweight — summary/verdict, not full payload). */
+/** A conversation with its ordered articles, incl. kind + full payload so the client can
+ * rebuild both answer snippets AND saved simulation cards on resume. */
 export async function getConversation(id: string): Promise<{ conversation: ConversationRow; articles: ArticleRow[] } | null> {
   const c = await db.execute({ sql: "SELECT * FROM conversations WHERE id = ?", args: [id] });
   if (!c.rows.length) return null;
   const row: any = c.rows[0];
-  const a = await db.execute({ sql: "SELECT id, conversation_id, question, summary, verdict, confidence, created_at FROM articles WHERE conversation_id = ? ORDER BY created_at ASC", args: [id] });
+  const a = await db.execute({ sql: "SELECT * FROM articles WHERE conversation_id = ? ORDER BY created_at ASC", args: [id] });
   return {
     conversation: { id: row.id, title: row.title, createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) },
-    articles: a.rows.map((r: any) => ({ id: r.id, conversationId: r.conversation_id, question: r.question, summary: r.summary, verdict: r.verdict ?? undefined, confidence: r.confidence ?? undefined, payload: undefined, createdAt: Number(r.created_at) })),
+    articles: a.rows.map((r: any) => ({
+      id: r.id, conversationId: r.conversation_id, question: r.question, summary: r.summary,
+      verdict: r.verdict ?? undefined, confidence: r.confidence ?? undefined, kind: r.kind ?? "answer",
+      payload: (() => { try { return JSON.parse(r.payload); } catch { return undefined; } })(),
+      createdAt: Number(r.created_at),
+    })),
   };
 }
 
@@ -304,10 +315,12 @@ export async function getArticle(id: string): Promise<ArticleRow | null> {
   return { id: r.id, conversationId: r.conversation_id, question: r.question, summary: r.summary, verdict: r.verdict ?? undefined, confidence: r.confidence ?? undefined, payload: JSON.parse(r.payload), createdAt: Number(r.created_at) };
 }
 
-/** Most-recent article summaries in a conversation — fed back to the model as prior findings. */
-export async function priorFindings(conversationId: string, limit = 3): Promise<string> {
-  const res = await db.execute({ sql: "SELECT question, summary FROM articles WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?", args: [conversationId, limit] });
-  return res.rows.reverse().map((r: any, i: number) => `[P${i + 1}] Q: ${r.question}\n    A: ${r.summary}`).join("\n");
+/** Most-recent article/simulation summaries in a conversation — fed back to the model as prior findings. */
+export async function priorFindings(conversationId: string, limit = 4): Promise<string> {
+  const res = await db.execute({ sql: "SELECT question, summary, kind FROM articles WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?", args: [conversationId, limit] });
+  return res.rows.reverse().map((r: any, i: number) =>
+    `[P${i + 1}] ${r.kind === "simulation" ? "Compliance simulation" : "Q"}: ${r.question}\n    ${r.kind === "simulation" ? "Result" : "A"}: ${r.summary}`,
+  ).join("\n");
 }
 
 // ── Validations (AILA v5 provision validation) ────────────────────────────────
@@ -335,6 +348,8 @@ export interface ValidationRow {
   coverage?: string;         // sectoral/subject-matter scope (e.g. "Cross-cutting", "Telecommunications services")
   timeframe?: string;        // temporal scope (e.g. "Since 2023", "Since 1988, last amended 2024")
   impactComments?: string;   // ESCAP "Impact or Comments on Acts or Practices" field
+  sourcePdfPath?: string;    // local path to the cached retrieved source (JSON supplementary)
+  ocrCer?: number;           // OCR character-error-rate estimate (0–1) if the source was OCR'd
 }
 
 /** Replace all validation rows for a seed DB row (idempotent re-validation), or append if no dbRow. */
@@ -346,8 +361,8 @@ export async function saveValidations(rows: ValidationRow[], replaceDbRow?: stri
       sql: `INSERT INTO validations
         (id, db_row, economy, law_name, law_number, last_amended, indicator_id, article_section,
          discovery_tag, verbatim, mapping_rationale, source_url, confidence, notes, seed_json,
-         raw_context, processing_ms, coverage, timeframe, impact_comments, level)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?)`,
+         raw_context, processing_ms, coverage, timeframe, impact_comments, level, source_pdf_path, ocr_cer)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         `val-${randomUUID().slice(0, 8)}`, r.dbRow ?? null, r.economy, r.lawName ?? null, r.lawNumber ?? null,
         r.lastAmended ?? null, r.indicatorId ?? null, r.articleSection ?? null, r.discoveryTag ?? null,
@@ -356,6 +371,7 @@ export async function saveValidations(rows: ValidationRow[], replaceDbRow?: stri
         r.seed ? JSON.stringify(r.seed) : null,
         r.rawContext ?? null, typeof r.processingMs === "number" ? r.processingMs : null,
         r.coverage ?? null, r.timeframe ?? null, r.impactComments ?? null, r.level ?? null,
+        r.sourcePdfPath ?? null, typeof r.ocrCer === "number" ? r.ocrCer : null,
       ],
     });
   }
@@ -375,6 +391,7 @@ function hydrateValidation(row: any): ValidationRow {
     rawContext: row.raw_context ?? undefined, processingMs: row.processing_ms ?? undefined,
     coverage: row.coverage ?? undefined, timeframe: row.timeframe ?? undefined,
     impactComments: row.impact_comments ?? undefined,
+    sourcePdfPath: row.source_pdf_path ?? undefined, ocrCer: row.ocr_cer ?? undefined,
   };
 }
 

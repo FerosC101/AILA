@@ -23,6 +23,8 @@ import { costStatus } from "./cost.js";
 import { classifyAuthority } from "./authority.js";
 import { validateSeedRow, validateAll, validateStatus, validatorEnabled, type SeedRow } from "./validate.js";
 import { loadValidations, validationStats } from "./db.js";
+import { logActivity, recentActivity } from "./activity.js";
+import { transferRules } from "./transfer.js";
 import multer from "multer";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -101,6 +103,61 @@ app.get("/policies", (req, res) => {
   if (policy) rows = rows.filter((r) => (r.policyFocus ?? "").toLowerCase().includes(policy));
 
   res.json({ count: rows.length, policies: rows });
+});
+
+/** GET /stats — real dashboard metrics (replaces the frontend's hardcoded numbers). */
+app.get("/stats", async (_req, res) => {
+  const [dbs, vstats, vals] = await Promise.all([dbStats(), validationStats(), loadValidations({})]);
+  const reviewQueue = vals.filter((v) => typeof v.confidence === "number" && v.confidence < 0.8).length;
+  const withConf = vals.filter((v) => typeof v.confidence === "number");
+  const avgConfidence = withConf.length ? withConf.reduce((a, v) => a + (v.confidence ?? 0), 0) / withConf.length : 0;
+  const economies = new Set(vals.map((v) => v.economy).filter(Boolean)).size
+    || new Set(loadPolicies().map((p) => p.jurisdiction)).size;
+  res.json({
+    regulations: (dbs as any).sources ?? 0,
+    clauses: (dbs as any).clauses ?? 0,
+    chunks: (dbs as any).chunks ?? 0,
+    validations: vstats.total,
+    newFindings: vstats.byTag.NEW ?? 0,
+    reviewQueue,
+    economies,
+    avgConfidence: Number(avgConfidence.toFixed(3)),
+    byTag: vstats.byTag,
+  });
+});
+
+/** GET /activity — recent real engine events (replaces hardcoded LIVE_EVENTS). */
+app.get("/activity", (req, res) => res.json(recentActivity(Number(req.query.limit) || 30)));
+
+/** GET /countries — per-economy aggregates from the real policy dataset + archive. */
+app.get("/countries", async (_req, res) => {
+  const policies = loadPolicies();
+  const agg = new Map<string, { country: string; region: string; urls: Set<string>; pillars: Set<string>; policies: number }>();
+  for (const p of policies) {
+    if (!agg.has(p.jurisdiction)) agg.set(p.jurisdiction, { country: p.jurisdiction, region: p.region, urls: new Set(), pillars: new Set(), policies: 0 });
+    const e = agg.get(p.jurisdiction)!;
+    e.urls.add(p.url); if (p.pillar) e.pillars.add(p.pillar); e.policies++;
+  }
+  const [clauses, vals] = await Promise.all([loadClauses({ limit: 6000 }), loadValidations({})]);
+  const clauseBy: Record<string, number> = {}, valBy: Record<string, number> = {};
+  for (const c of clauses) clauseBy[c.jurisdiction] = (clauseBy[c.jurisdiction] ?? 0) + 1;
+  for (const v of vals) valBy[v.economy] = (valBy[v.economy] ?? 0) + 1;
+  const countries = [...agg.values()].map((e) => ({
+    country: e.country, region: e.region,
+    regulations: e.urls.size, pillars: e.pillars.size, policies: e.policies,
+    clauses: clauseBy[e.country] ?? 0, validations: valBy[e.country] ?? 0,
+  })).sort((a, b) => b.regulations - a.regulations);
+  res.json({ count: countries.length, countries });
+});
+
+/** GET /transfer-rules — ASEAN cross-border transfer comparison, derived from the DB. */
+app.get("/transfer-rules", async (_req, res) => {
+  try {
+    const rules = await transferRules();
+    res.json({ count: rules.length, rules });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 /**
@@ -233,7 +290,9 @@ app.get("/engine/analyze/:id", async (req, res) => {
 app.post("/extract/:id", async (req, res) => {
   if (!extractorEnabled()) return res.status(503).json({ error: "GEMINI_API_KEY not configured." });
   try {
-    res.json(await extractSource(req.params.id));
+    const out = await extractSource(req.params.id);
+    logActivity("extract", `Extracted ${out.count} clause(s) from ${out.instrument?.slice(0, 50) ?? req.params.id}`);
+    res.json(out);
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
@@ -300,7 +359,10 @@ app.post("/validate", async (req, res) => {
   if (!seed.economy) return res.status(400).json({ error: "economy is required." });
   seed.economy = normalizeEconomy(seed.economy);
   try {
-    res.json({ seed: { dbRow: seed.dbRow, economy: seed.economy }, provisions: await validateSeedRow(seed as SeedRow) });
+    const provisions = await validateSeedRow(seed as SeedRow);
+    const tags = [...new Set(provisions.map((p) => p.discoveryTag).filter(Boolean))].join(", ");
+    logActivity("validate", `Validated ${seed.economy} · ${(seed.lawName ?? seed.indicators?.[0] ?? "").toString().slice(0, 50)} → ${provisions.length} provision(s)${tags ? ` [${tags}]` : ""}`);
+    res.json({ seed: { dbRow: seed.dbRow, economy: seed.economy }, provisions });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
@@ -333,7 +395,7 @@ app.get("/export/round1.csv", async (req, res) => {
   const q = (k: string) => req.query[k] as string | undefined;
   const csv = await round1Csv({ economy: q("economy"), indicator: q("indicator"), tag: q("tag") });
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="aila-round1-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.setHeader("Content-Disposition", `attachment; filename="aila-validated-provisions-${new Date().toISOString().slice(0, 10)}.csv"`);
   res.send("﻿" + csv); // BOM for Excel UTF-8
 });
 
@@ -341,7 +403,7 @@ app.get("/export/round1.csv", async (req, res) => {
 app.get("/export/round1.json", async (req, res) => {
   const q = (k: string) => req.query[k] as string | undefined;
   const data = await round1Json({ economy: q("economy"), indicator: q("indicator"), tag: q("tag") });
-  res.setHeader("Content-Disposition", `attachment; filename="aila-round1-${new Date().toISOString().slice(0, 10)}.json"`);
+  res.setHeader("Content-Disposition", `attachment; filename="aila-validated-provisions-${new Date().toISOString().slice(0, 10)}.json"`);
   res.json(data);
 });
 
@@ -454,14 +516,21 @@ app.get("/simulate/options", (_req, res) => {
   res.json(simulationOptions());
 });
 
-/** POST /simulate/parse — turn a plain-English scenario into a structured run. Body: { text }. */
+/** POST /simulate/parse — parse a plain-English scenario, run it, and (if in a conversation) save it. Body: { text, conversationId? }. */
 app.post("/simulate/parse", async (req, res) => {
   const text = req.body?.text;
+  let { conversationId } = req.body ?? {};
   if (!text || typeof text !== "string") return res.status(400).json({ error: "text is required." });
   try {
     const scenario = await parseScenario(text);
     const result = await runSimulation({ ...scenario, explain: true });
-    res.json(result);
+    // persist the simulation into the conversation so it survives navigation and feeds context
+    if (!conversationId) conversationId = await createConversation(`🧪 ${text}`);
+    const summary = result.narrative || result.overall?.summary || "";
+    const articleId = await saveArticle(conversationId, text,
+      { summary, verdict: result.overall?.verdict, confidence: (result.overall?.score ?? 0) / 100, ...result },
+      "simulation");
+    res.json({ ...result, conversationId, articleId });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
@@ -513,6 +582,7 @@ app.post("/rag/query", async (req, res) => {
     // persist: create the conversation on first question, then save this answer as an article
     if (!conversationId) conversationId = await createConversation(question);
     const articleId = await saveArticle(conversationId, question, result);
+    logActivity("query", `Answered: ${question.slice(0, 80)}${result.sourcesAdded ? ` (+${result.sourcesAdded} scraped live)` : ""}`);
     res.json({ ...result, conversationId, articleId });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
@@ -629,6 +699,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
   const jurisdiction = (req.body?.jurisdiction as string) || "Uploaded";
   try {
     const result = await processUpload(f.buffer, f.originalname, f.mimetype, jurisdiction);
+    logActivity("ingest", `Uploaded ${f.originalname} → ${result?.clauses?.length ?? 0} clause(s) indexed`);
     res.json(result);
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : String(err) });

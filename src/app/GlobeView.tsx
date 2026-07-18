@@ -23,6 +23,19 @@ const CENTROIDS: Record<string, { lat: number; lng: number; flag: string }> = {
 // world-countries polygons (globe.gl canonical dataset) — for the hex country map
 const COUNTRIES_URL = "https://raw.githubusercontent.com/vasturiano/globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson";
 
+// Pillar palette — each RDTII pillar gets its own colour + a compact chip label so the
+// law panel reads as a set of tags rather than a run-on line of text.
+const PILLAR_STYLES: Array<{ test: RegExp; short: string; color: string }> = [
+  { test: /cross[- ]?border/i,               short: "Cross-border",      color: "#818CF8" },
+  { test: /domestic|privacy|protection/i,    short: "Domestic privacy",  color: "#34D399" },
+  { test: /cyber|security/i,                 short: "Cyber security",    color: "#FBBF24" },
+  { test: /competition|trade|market/i,       short: "Trade & market",    color: "#F472B6" },
+];
+function pillarStyle(name: string): { short: string; color: string } {
+  const m = PILLAR_STYLES.find((p) => p.test.test(name));
+  return m ? { short: m.short, color: m.color } : { short: name, color: "#94A3B8" };
+}
+
 type ApiNode = {
   id: string; type: string; label: string; country: string; region: string;
   url?: string; instrument?: string; pillars?: string[]; policies?: string[]; coverage?: string; timeframe?: string;
@@ -87,7 +100,7 @@ export default function GlobeView({ onSelect, dimmed }: Props) {
   }, [state]);
 
   const globeMaterial = useMemo(
-    () => new THREE.MeshPhongMaterial({ color: "#12283f", emissive: "#0a1626", shininess: 4, transparent: true, opacity: 0.98 }),
+    () => new THREE.MeshPhongMaterial({ color: "#0B0E1A", emissive: "#0a0a1a", shininess: 3, transparent: true, opacity: 0.98 }),
     [],
   );
   const maxCount = Math.max(1, ...points.map((p) => p.count));
@@ -110,68 +123,87 @@ export default function GlobeView({ onSelect, dimmed }: Props) {
   const selectedRegs = selected ? nodes.filter((n) => n.type === "regulation" && n.country === selected.country) : [];
 
   return (
-    <div ref={wrap} className="absolute inset-0" style={{ background: "radial-gradient(rgba(148,163,184,0.10) 0.7px, transparent 0.8px) 0 0 / 26px 26px, radial-gradient(ellipse at 50% 42%, #0e1524 0%, #08090C 72%)", opacity: dimmed ? 0.25 : 1, transition: "opacity 0.3s" }}>
+    <div ref={wrap} className="absolute inset-0" style={{ background: "linear-gradient(rgba(129,140,248,0.05) 1px, transparent 1px) 0 0 / 56px 56px, linear-gradient(90deg, rgba(129,140,248,0.05) 1px, transparent 1px) 0 0 / 56px 56px, radial-gradient(ellipse at 50% 42%, rgba(49,46,129,0.22) 0%, #000000 72%)", opacity: dimmed ? 0.25 : 1, transition: "opacity 0.3s" }}>
       {state === "ready" && (
         <Globe
           ref={globeRef}
           width={size.w} height={size.h}
           backgroundColor="rgba(0,0,0,0)"
           globeMaterial={globeMaterial}
-          showAtmosphere atmosphereColor="#93C5FD" atmosphereAltitude={0.16}
-          // country map — hex-dotted continents
+          showAtmosphere atmosphereColor="#818CF8" atmosphereAltitude={0.14}
+          // country map — hex-dotted continents (crisp indigo-grey)
           hexPolygonsData={countries}
           hexPolygonResolution={3}
-          hexPolygonMargin={0.35}
-          hexPolygonAltitude={0.005}
-          hexPolygonColor={() => "rgba(148,163,184,0.55)"}
-          // jurisdiction markers (flat glowing dots)
+          hexPolygonMargin={0.4}
+          hexPolygonAltitude={0.004}
+          hexPolygonColor={() => "rgba(129,140,248,0.4)"}
+          // jurisdiction markers (sharp indigo columns)
           pointsData={points}
           pointLat="lat" pointLng="lng"
-          pointColor={(d: any) => (selected?.id === d.id ? "#F8FAFC" : "#38BDF8")}
-          pointAltitude={0.01}
-          pointRadius={(d: any) => 0.5 + (d.count / maxCount) * 0.7}
-          pointLabel={(d: any) => `<div style="font:600 12px Inter,sans-serif;color:#0F172A;background:#fff;border:1px solid #E5E9F0;border-radius:8px;padding:6px 10px;box-shadow:0 6px 20px rgba(15,23,42,0.15)">${d.flag} ${d.label} · ${d.count} sources</div>`}
+          pointColor={(d: any) => (selected?.id === d.id ? "#FFFFFF" : "#818CF8")}
+          pointAltitude={(d: any) => 0.01 + (d.count / maxCount) * 0.08}
+          pointRadius={(d: any) => 0.32 + (d.count / maxCount) * 0.42}
+          pointLabel={(d: any) => `<div style="font:600 12px Inter,sans-serif;color:#E2E8F0;background:#0B0F1A;border:1px solid rgba(129,140,248,0.4);padding:6px 10px">${d.flag} ${d.label} · ${d.count} sources</div>`}
           onPointClick={(d: any) => flyTo(d)}
           // pulse rings under markers
           ringsData={points}
           ringLat="lat" ringLng="lng"
-          ringColor={() => (t: number) => `rgba(56,189,248,${1 - t})`}
+          ringColor={() => (t: number) => `rgba(129,140,248,${1 - t})`}
           ringMaxRadius={2.2} ringPropagationSpeed={1.3} ringRepeatPeriod={1800}
           // regional cross-border arcs
           arcsData={arcs}
-          arcColor={() => ["rgba(56,189,248,0.1)", "rgba(56,189,248,0.55)"]}
+          arcColor={() => ["rgba(129,140,248,0.08)", "rgba(165,180,252,0.6)"]}
           arcAltitude={0.22} arcStroke={0.35}
           arcDashLength={0.5} arcDashGap={0.5} arcDashAnimateTime={2800}
         />
       )}
 
-      {/* country → regulations side panel */}
+      {/* country → regulations side panel (dark, matched to the graph modal) */}
       {selected && (
-        <div className="absolute top-0 right-0 bottom-0 z-40 flex flex-col" style={{ width: "320px", background: "rgba(255,255,255,0.97)", backdropFilter: "blur(20px)", borderLeft: "1px solid #E5E9F0", boxShadow: "-4px 0 24px rgba(15,23,42,0.08)" }}>
-          <div className="flex items-center gap-2 p-4 border-b" style={{ borderColor: "#E5E9F0" }}>
+        <div className="absolute top-0 right-0 bottom-0 z-40 flex flex-col" style={{ width: "320px", background: "rgba(8,11,20,0.95)", backdropFilter: "blur(20px)", borderLeft: "1px solid rgba(129,140,248,0.18)", boxShadow: "-8px 0 40px rgba(0,0,0,0.5)" }}>
+          <div className="flex items-center gap-2 p-4" style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
             <span className="text-2xl">{selected.flag}</span>
             <div className="flex-1">
-              <h3 className="font-semibold text-sm" style={{ color: "#0F172A" }}>{selected.label}</h3>
-              <p className="text-xs" style={{ color: "#64748B" }}>{selectedRegs.length} tracked sources · {selected.region}</p>
+              <h3 className="font-semibold text-sm" style={{ color: "#F1F4FA" }}>{selected.label}</h3>
+              <p className="text-xs" style={{ color: "#A6AEC0" }}>{selectedRegs.length} tracked sources · {selected.region}</p>
             </div>
-            <button onClick={() => setSelected(null)} className="text-xs px-2 py-1 rounded" style={{ color: "#64748B", border: "1px solid #E5E9F0", background: "#fff", cursor: "pointer" }}>✕</button>
+            <button onClick={() => setSelected(null)} className="text-xs px-2 py-1 rounded" style={{ color: "#A6AEC0", border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)", cursor: "pointer" }}>✕</button>
           </div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
-            {selectedRegs.map((r) => (
-              <button key={r.id} onClick={() => openReg(r)} className="w-full text-left px-3 py-2 rounded-lg transition-colors"
-                style={{ background: "#fff", border: "1px solid #E5E9F0", cursor: "pointer" }}>
-                <p className="text-xs font-medium" style={{ color: "#1E293B" }}>{r.instrument || r.label}</p>
-                <p className="text-xs mt-0.5" style={{ color: "#94A3B8" }}>{(r.pillars ?? []).join(" · ") || r.region}</p>
-              </button>
-            ))}
-            {selectedRegs.length === 0 && <p className="text-xs text-center py-6" style={{ color: "#94A3B8" }}>No tracked sources.</p>}
+          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            {selectedRegs.map((r) => {
+              const pillars = r.pillars ?? [];
+              const accent = pillars.length ? pillarStyle(pillars[0]).color : "#4B5468";
+              return (
+                <button key={r.id} onClick={() => openReg(r)} className="w-full text-left rounded-lg transition-colors group"
+                  style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderLeft: `2px solid ${accent}`, cursor: "pointer", padding: "10px 12px" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(129,140,248,0.1)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.03)")}>
+                  <p className="text-xs font-medium leading-snug" style={{ color: "#EEF1F7" }}>{r.instrument || r.label}</p>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {pillars.length ? pillars.map((p) => {
+                      const ps = pillarStyle(p);
+                      return (
+                        <span key={p} className="inline-flex items-center gap-1" title={p}
+                          style={{ fontSize: "10px", fontWeight: 600, color: ps.color, background: `${ps.color}1F`, border: `1px solid ${ps.color}44`, borderRadius: "999px", padding: "2px 8px", fontFamily: "IBM Plex Sans, sans-serif", letterSpacing: "0.02em" }}>
+                          <span style={{ width: 5, height: 5, borderRadius: "50%", background: ps.color, display: "inline-block" }} />
+                          {ps.short}
+                        </span>
+                      );
+                    }) : (
+                      <span style={{ fontSize: "10px", color: "#8B93A7", fontFamily: "IBM Plex Sans, sans-serif" }}>{r.region}</span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+            {selectedRegs.length === 0 && <p className="text-xs text-center py-6" style={{ color: "#A6AEC0" }}>No tracked sources.</p>}
           </div>
         </div>
       )}
 
       {state !== "ready" && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <p className="text-xs tracking-widest uppercase" style={{ color: "#94A3B8", fontFamily: "IBM Plex Sans, sans-serif" }}>
+          <p className="text-xs tracking-widest uppercase" style={{ color: "#A6AEC0", fontFamily: "IBM Plex Sans, sans-serif" }}>
             {state === "loading" ? "Loading globe…" : state === "empty" ? "No active jurisdictions" : "Backend unavailable"}
           </p>
         </div>

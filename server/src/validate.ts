@@ -5,13 +5,36 @@
 // distinct from the document-atom clause extraction in extract.ts.
 
 import * as cheerio from "cheerio";
-import { fetchText, fetchPdfText, fetchWaybackSnapshot } from "./scraper.js";
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { fetchText, fetchPdfText, fetchWaybackSnapshot, BROWSER_HEADERS } from "./scraper.js";
+import { ocrPdf, getOcrCer } from "./ocr.js";
 import { ensureEnglish } from "./translate.js";
 import { searchWeb } from "./websearch.js";
 import { classifyAuthority } from "./authority.js";
 import { RDTII_INDICATORS, isIndicatorId, findIndicator } from "./indicators.js";
 import { recordGeminiUsage } from "./cost.js";
 import { saveValidations, crossRefClauseFields, type ValidationRow, type DiscoveryTag } from "./db.js";
+
+// Local cache of retrieved source documents (→ JSON `source_pdf_path`).
+const CACHE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "data", "cache");
+function cacheSource(url: string, buf: Uint8Array, ext: string): string | undefined {
+  try {
+    if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
+    const name = `${createHash("sha1").update(url).digest("hex").slice(0, 16)}.${ext}`;
+    writeFileSync(join(CACHE_DIR, name), buf);
+    return `server/data/cache/${name}`; // repo-relative retrieval path
+  } catch { return undefined; }
+}
+async function fetchBytes(url: string): Promise<Uint8Array | null> {
+  try {
+    const r = await fetch(url, { headers: BROWSER_HEADERS, redirect: "follow" });
+    if (!r.ok) return null;
+    return new Uint8Array(await r.arrayBuffer());
+  } catch { return null; }
+}
 
 const INDICATOR_CATALOG = RDTII_INDICATORS.map((i) => `${i.id} (P${i.pillarId} ${i.pillar}): ${i.focus}`).join("\n");
 const TAGS: DiscoveryTag[] = ["VERIFIED", "UPDATED", "NEW", "INVALID"];
@@ -59,17 +82,40 @@ async function extractAt(url: string): Promise<string> {
  * bot-walled primary portals (legislation.gov.au, AGC) are re-fetched through the
  * Internet Archive snapshot, which serves the original page without the crawler wall.
  */
-async function sourceText(url: string, economy: string): Promise<string> {
-  let text = await extractAt(url).catch(() => "");
+interface FetchedSource { text: string; pdfPath?: string; cer?: number }
+async function sourceText(url: string, economy: string): Promise<FetchedSource> {
+  const id = `val-${Buffer.from(url).toString("base64url").slice(0, 16)}`;
+  const isPdf = /\.pdf(\?|#|$)/i.test(url);
+  let text = "", pdfPath: string | undefined, cer: number | undefined;
+
+  if (isPdf) {
+    const buf = await fetchBytes(url);
+    if (buf) {
+      pdfPath = cacheSource(url, buf, "pdf");
+      // ocrPdf: unpdf text-layer fast-path; falls back to OCR (which records a CER) for scanned PDFs
+      text = (await ocrPdf(buf, id, TEXT_PER_SOURCE, { jurisdiction: economy }).catch(() => null)) ?? "";
+      cer = getOcrCer(id); // set only when OCR actually ran
+    }
+  } else {
+    const html = await fetchText(url, 12_000).catch(() => null);
+    if (html) {
+      pdfPath = cacheSource(url, Buffer.from(html), "html");
+      const $ = cheerio.load(html);
+      $("script, style, noscript, svg, header, footer, nav, form").remove();
+      text = ($("main").length ? $("main") : $("body")).text().replace(/\s+/g, " ").trim().slice(0, TEXT_PER_SOURCE);
+    }
+  }
+
+  // bot-block / thin content → Internet Archive bypass
   if (text.length < 800 || BOT_BLOCKED.test(url)) {
     const snap = await fetchWaybackSnapshot(url).catch(() => null);
     if (snap) {
       const archived = await extractAt(snap.url).catch(() => "");
-      if (archived.length > text.length) text = archived; // keep the richer of direct vs archived
+      if (archived.length > text.length) text = archived;
     }
   }
-  if (!text || text.length < 200) return "";
-  return ensureEnglish(text, `val-${Buffer.from(url).toString("base64url").slice(0, 16)}`, economy);
+  if (!text || text.length < 200) return { text: "", pdfPath, cer };
+  return { text: await ensureEnglish(text, id, economy), pdfPath, cer };
 }
 
 /** Discover official candidate URLs for a seed row (seed URL first, then authority-ranked search). */
@@ -173,10 +219,10 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
   const t0 = Date.now();
 
   const urls = await discoverSources(seed);
-  const sources: { url: string; text: string }[] = [];
+  const sources: { url: string; text: string; pdfPath?: string; cer?: number }[] = [];
   for (const url of urls) {
-    const text = await sourceText(url, seed.economy).catch(() => "");
-    if (text) sources.push({ url, text });
+    const s = await sourceText(url, seed.economy).catch(() => ({ text: "" } as FetchedSource));
+    if (s.text) sources.push({ url, text: s.text, pdfPath: s.pdfPath, cer: s.cer });
   }
 
   let rows: ValidationRow[] = [];
@@ -209,7 +255,7 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
           tag = undefined;
           notes = `Could not confirm the exact provision from an official source this session — flagged for manual verification. ${notes ?? ""}`.trim();
         }
-        const srcText = sources.find((s) => s.url === sourceUrl)?.text ?? sources[0]?.text ?? "";
+        const src = sources.find((s) => s.url === sourceUrl) ?? sources[0];
         return {
           dbRow, economy: seed.economy,
           lawName: typeof p.lawName === "string" && p.lawName ? p.lawName : seed.lawName,
@@ -221,10 +267,11 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
           mappingRationale: typeof p.mappingRationale === "string" ? p.mappingRationale.slice(0, 300) : undefined,
           sourceUrl, confidence: typeof p.confidence === "number" ? Math.max(0, Math.min(1, p.confidence)) : 0.5,
           notes, seed,
-          rawContext: contextAround(srcText, verbatim),
+          rawContext: contextAround(src?.text ?? "", verbatim),
           coverage: typeof p.coverage === "string" && p.coverage ? p.coverage : (seed.context || undefined),
           timeframe: typeof p.timeframe === "string" && p.timeframe ? p.timeframe : undefined,
           impactComments: typeof p.impactComments === "string" && p.impactComments ? p.impactComments : undefined,
+          sourcePdfPath: src?.pdfPath, ocrCer: src?.cer,
         } as ValidationRow;
       });
     if (!rows.length) {
