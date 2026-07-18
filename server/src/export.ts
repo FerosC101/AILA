@@ -169,11 +169,11 @@ const COLUMN_REGISTRY: ColumnDef[] = [
     getValue: (r) => (isValidationRow(r) ? r.sourceUrl : r.url) ?? "",
   },
   {
-    // Preserves the original asymmetry: clauses show the raw discoveryTag
-    // text (e.g. "candidate — no RDTII match"); validations derive
-    // KNOWN/NEW via the old tagOut() rule (default KNOWN unless NEW).
+    // Validations: full ESCAP vocabulary (VERIFIED | UPDATED | NEW | INVALID).
+    // Clauses: extract.ts vocabulary (e.g. "candidate — no RDTII match" for scraped
+    // substantive rules with no RDTII indicator match — not the same as validation NEW).
     id: "discoveryTag", label: "Discovery Tag", group: "Source & Validation", defaultChecked: true,
-    getValue: (r) => (isValidationRow(r) ? (r.discoveryTag === "NEW" ? "NEW" : "KNOWN") : r.discoveryTag ?? ""),
+    getValue: (r) => r.discoveryTag ?? "",
   },
   {
     id: "confidence", label: "Confidence", group: "Source & Validation", defaultChecked: true,
