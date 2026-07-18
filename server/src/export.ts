@@ -4,6 +4,7 @@
 
 import { loadClauses, loadValidations, REVIEW_THRESHOLD, type StoredClause, type ValidationRow } from "./db.js";
 import { findIndicator, findPillarIdByName, pillarName } from "./indicators.js";
+import { computeGroupAScore } from "./rawScore.js";
 
 /** RFC-4180 field escaping: quote when the value contains a comma, quote, or newline. */
 function esc(v: unknown): string {
@@ -72,12 +73,14 @@ const COLUMN_REGISTRY: ColumnDef[] = [
     getValue: (r) => (isValidationRow(r) ? r.indicatorId ?? "" : (r.indicators ?? []).join("; ")),
   },
   {
-    // Genuinely external ESCAP data — no ingestion path in this codebase yet, and none of
-    // Gemini/OCR/scraping can originate it (it's the ESCAP-side raw score, not ours to compute).
-    // Shipped in the picker so the column exists and is visibly labeled rather than silently
-    // blank; backfill once there's a real source for it.
     id: "rawScore", label: "RawScore", group: "Context / Research Scope",
-    getValue: () => "Not yet extracted",
+    getValue: (r) => {
+      const ids = isValidationRow(r) ? (r.indicatorId ? [r.indicatorId] : []) : r.indicators ?? [];
+      const scores = ids.map((id) => computeGroupAScore(isValidationRow(r) ? r.economy : r.jurisdiction, id));
+      if (!scores.length) return "";
+      if (scores.every((s) => s === "NOT FOUND")) return "Not yet extracted";
+      return scores.map((s) => (s === "NOT FOUND" ? "?" : s)).join("; ");
+    },
   },
 
   // 2. Legal Instrument Identification
@@ -94,9 +97,10 @@ const COLUMN_REGISTRY: ColumnDef[] = [
     getValue: (r) => r.lawNumber ?? "",
   },
   {
-    // Only exists on StoredClause — ValidationRow has no `level` field.
+    // Backfilled on ValidationRow via clauses cross-reference in validate.ts —
+    // validate.ts's own Gemini prompt doesn't ask for Level at all.
     id: "level", label: "Level", group: "Legal Instrument Identification",
-    getValue: (r) => (isValidationRow(r) ? "" : r.level ?? ""),
+    getValue: (r) => r.level ?? "",
   },
   {
     id: "lastAmended", label: "Last Amended", group: "Legal Instrument Identification", defaultChecked: true,
