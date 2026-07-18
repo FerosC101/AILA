@@ -1,7 +1,7 @@
 import { loadPolicies } from "./sources.js";
 import type { RegulationPolicy } from "./types.js";
 
-export type GraphNodeType = "country" | "pillar" | "regulation";
+export type GraphNodeType = "country" | "pillar" | "regulation" | "clause";
 
 export interface GraphNode {
   id: string;
@@ -142,4 +142,42 @@ export function buildGraph(activeUrls?: Set<string>): GraphPayload {
       byPillar,
     },
   };
+}
+
+export interface ClauseLike { id?: number; sourceId: string; jurisdiction: string; instrument: string; url: string; type?: string; text: string; indicators?: string[] }
+
+/**
+ * Attach Document-Archive clauses as leaf nodes on the graph — each clause hangs off
+ * its regulation node (matched by URL), or off its country hub for uploaded / live /
+ * validated documents that aren't in the seed policy set. Ensures everything in the
+ * archive is represented in the graph.
+ */
+export function attachClauses(payload: GraphPayload, clauses: ClauseLike[]): GraphPayload {
+  const nodes = [...payload.nodes];
+  const edges = [...payload.edges];
+  const regByUrl = new Map<string, string>();
+  for (const n of payload.nodes) if (n.type === "regulation" && n.url) regByUrl.set(n.url, n.id);
+  const countryIds = new Set(payload.nodes.filter((n) => n.type === "country").map((n) => n.id));
+
+  let added = 0;
+  for (const c of clauses) {
+    let parentId = regByUrl.get(c.url);
+    if (!parentId) {
+      const cid = `country:${slug(c.jurisdiction)}`;
+      if (!countryIds.has(cid)) {
+        nodes.push({ id: cid, type: "country", label: c.jurisdiction, country: c.jurisdiction, region: "—" });
+        countryIds.add(cid);
+      }
+      parentId = cid;
+    }
+    const clauseId = `clause:${c.sourceId}:${c.id ?? added}`;
+    nodes.push({
+      id: clauseId, type: "clause", label: (c.text || c.instrument || "clause").slice(0, 80),
+      country: c.jurisdiction, region: "—", url: c.url, instrument: c.instrument,
+      pillars: c.indicators, coverage: c.type,
+    });
+    edges.push({ id: `${parentId}->${clauseId}`, source: parentId, target: clauseId, type: "belongs" });
+    added++;
+  }
+  return { ...payload, nodes, edges, stats: { ...payload.stats } };
 }

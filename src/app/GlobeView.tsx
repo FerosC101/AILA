@@ -110,7 +110,7 @@ export default function GlobeView({ onSelect, dimmed }: Props) {
   const selectedRegs = selected ? nodes.filter((n) => n.type === "regulation" && n.country === selected.country) : [];
 
   return (
-    <div ref={wrap} className="absolute inset-0" style={{ background: "#ffffff", opacity: dimmed ? 0.25 : 1, transition: "opacity 0.3s" }}>
+    <div ref={wrap} className="absolute inset-0" style={{ background: "radial-gradient(rgba(148,163,184,0.10) 0.7px, transparent 0.8px) 0 0 / 26px 26px, radial-gradient(ellipse at 50% 42%, #0e1524 0%, #08090C 72%)", opacity: dimmed ? 0.25 : 1, transition: "opacity 0.3s" }}>
       {state === "ready" && (
         <Globe
           ref={globeRef}

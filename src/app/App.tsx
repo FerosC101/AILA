@@ -33,6 +33,7 @@ interface GNode {
   pulsePhase: number;
   alerting?: boolean;
   url?: string;
+  parentId?: string; ox?: number; oy?: number; oz?: number; // clause satellites (follow their parent)
   details?: {
     category: string; enacted: string;
     status: "Active" | "Amended" | "Repealed" | "Proposed";
@@ -241,9 +242,10 @@ function graphFromApi(payload: ApiGraph, w: number, h: number): { nodes: GNode[]
     placedRegs.add(r.id);
     const ra = baseAngle + (n > 1 ? (idx / (n - 1) - 0.5) * 1.4 : 0);
     const rr = 70 + (idx % 3) * 20;
+    const rx = cx + rr * Math.cos(ra) + jit(), ry = cy + rr * Math.sin(ra) * 0.9 + jit(), rz = cz + rr * Math.sin(ra * 0.8) * 0.7 + jit();
     nodes.push({
       id: r.id, type: "regulation", label: r.label, shortLabel: shortLabelFor(r.label),
-      x: cx + rr * Math.cos(ra) + jit(), y: cy + rr * Math.sin(ra) * 0.9 + jit(), z: cz + rr * Math.sin(ra * 0.8) * 0.7 + jit(),
+      x: rx, y: ry, z: rz,
       vx: 0, vy: 0, vz: 0, radius: 10, color, glowColor: color, pulsePhase: Math.random() * Math.PI * 2,
       url: r.url,
       details: {
@@ -251,6 +253,25 @@ function graphFromApi(payload: ApiGraph, w: number, h: number): { nodes: GNode[]
         clauses: r.policies?.length ?? 0, amendments: 0, coverage: r.country, confidence: 0.9,
         description: `${r.instrument}\n\nPillars: ${(r.pillars ?? []).join(", ") || "—"}\nPolicy focus: ${(r.policies ?? []).join("; ") || "—"}`,
       },
+    });
+    // clause leaf nodes (Document Archive) orbit their regulation as static micro-dots
+    const clauseKids = (children.get(r.id) ?? []).map(id => byId.get(id)!).filter(k => k && k.type === "clause");
+    clauseKids.forEach((cl, k) => {
+      const ca = ra + ((clauseKids.length > 1 ? k / (clauseKids.length - 1) - 0.5 : 0) * 1.6) + k * 0.7;
+      const cr = 20 + (k % 4) * 7;
+      const ox = cr * Math.cos(ca), oy = cr * Math.sin(ca), oz = cr * Math.sin(ca * 0.6) * 0.6;
+      nodes.push({
+        id: cl.id, type: "clause", label: cl.label, parentId: r.id, ox, oy, oz,
+        x: rx + ox, y: ry + oy, z: rz + oz, vx: 0, vy: 0, vz: 0,
+        radius: 3.2, color: "#94A3B8", glowColor: "#94A3B8", pulsePhase: Math.random() * Math.PI * 2,
+        url: cl.url,
+        details: {
+          category: (cl as any).coverage || "Clause", enacted: "N/A", status: "Active",
+          clauses: 0, amendments: 0, coverage: cl.country, confidence: 0.9,
+          description: `${cl.label}${cl.pillars?.length ? `\n\nIndicators: ${cl.pillars.join(", ")}` : ""}`,
+        },
+      });
+      pushEdge(r.id, cl.id);
     });
   };
 
@@ -309,15 +330,33 @@ function graphFromApi(payload: ApiGraph, w: number, h: number): { nodes: GNode[]
       placeReg(r, nx, ny, nz, angle, j, regKids.length, NODE_PALETTE.pillarless);
       pushEdge(c.id, r.id);
     });
+
+    // uploaded / live / validated documents attach straight to the country hub
+    const clauseKids = kids.filter(k => k.type === "clause");
+    clauseKids.forEach((cl, k) => {
+      const ca = angle + ((clauseKids.length > 1 ? k / (clauseKids.length - 1) - 0.5 : 0) * 1.8);
+      const cr = 46 + (k % 5) * 9;
+      const ox = cr * Math.cos(ca), oy = cr * Math.sin(ca) * 0.9, oz = cr * Math.sin(ca * 0.6) * 0.6;
+      nodes.push({
+        id: cl.id, type: "clause", label: cl.label, parentId: c.id, ox, oy, oz,
+        x: nx + ox, y: ny + oy, z: nz + oz, vx: 0, vy: 0, vz: 0,
+        radius: 3.2, color: "#94A3B8", glowColor: "#94A3B8", pulsePhase: Math.random() * Math.PI * 2,
+        url: cl.url,
+        details: { category: "Clause", enacted: "N/A", status: "Active", clauses: 0, amendments: 0, coverage: cl.country, confidence: 0.9, description: cl.label },
+      });
+      pushEdge(c.id, cl.id);
+    });
   });
 
   return { nodes, edges };
 }
 
 // ==================== FORCE SIMULATION ====================
-function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
+function applyForces(allNodes: GNode[], edges: GEdge[], w: number, h: number) {
   const radius = Math.min(w, h) * 0.46;
   const REP = 6200, CK = 0.07, XK = 0.016, GR = 0.00038, D = 0.88;
+  // clause satellites don't participate in the O(n²) sim — they follow their parent (below)
+  const nodes = allNodes.filter(n => n.type !== "clause");
   nodes.forEach(n => {
     n.vx += (-n.x) * GR;
     n.vy += (-n.y) * GR;
@@ -360,6 +399,12 @@ function applyForces(nodes: GNode[], edges: GEdge[], w: number, h: number) {
       n.vx *= 0.7; n.vy *= 0.7; n.vz *= 0.7;
     }
   });
+  // clause satellites track their parent node
+  for (const c of allNodes) {
+    if (c.type !== "clause") continue;
+    const p = nm.get(c.parentId ?? "");
+    if (p) { c.x = p.x + (c.ox ?? 0); c.y = p.y + (c.oy ?? 0); c.z = p.z + (c.oz ?? 0); }
+  }
 }
 
 // ==================== CANVAS DRAWING ====================
@@ -415,20 +460,29 @@ function drawGraph(
   scanId: string|null, scanGlow: number
 ): Record<string, ProjNode> {
   ctx.clearRect(0,0,w,h);
-  ctx.globalAlpha = dimmed ? 0.22 : 1;
 
-  const projected = new Map<string, ProjNode>(nodes.map(n => [n.id, projectNode(n, w, h, view)]));
+  // ── Dark base: near-black with a faint blue-grey depth wash ──────────────────
+  ctx.fillStyle="#08090C"; ctx.fillRect(0,0,w,h);
+  const bg=ctx.createRadialGradient(w/2,h*0.42,0,w/2,h*0.42,Math.max(w,h)*0.7);
+  bg.addColorStop(0,"rgba(30,58,95,0.16)");
+  bg.addColorStop(0.5,"rgba(15,23,42,0.10)");
+  bg.addColorStop(1,"rgba(0,0,0,0)");
+  ctx.fillStyle=bg; ctx.fillRect(0,0,w,h);
 
-  // Dot grid — subtle dark dots on white
-  ctx.fillStyle="rgba(15,23,42,0.05)";
-  for (let x=0;x<w;x+=48) for (let y=0;y<h;y+=48) {
-    ctx.beginPath(); ctx.arc(x,y,0.5,0,Math.PI*2); ctx.fill();
+  // Sharp grid lines (thin, low-alpha) + dot at each intersection
+  const G=52;
+  ctx.strokeStyle="rgba(148,163,184,0.05)"; ctx.lineWidth=1;
+  ctx.beginPath();
+  for (let x=(w/2)%G; x<w; x+=G) { ctx.moveTo(Math.round(x)+0.5,0); ctx.lineTo(Math.round(x)+0.5,h); }
+  for (let y=(h/2)%G; y<h; y+=G) { ctx.moveTo(0,Math.round(y)+0.5); ctx.lineTo(w,Math.round(y)+0.5); }
+  ctx.stroke();
+  ctx.fillStyle="rgba(148,163,184,0.14)";
+  for (let x=(w/2)%G; x<w; x+=G) for (let y=(h/2)%G; y<h; y+=G) {
+    ctx.beginPath(); ctx.arc(x,y,0.9,0,Math.PI*2); ctx.fill();
   }
-  // Faint central vignette
-  const cg=ctx.createRadialGradient(w/2,h/2,0,w/2,h/2,Math.min(w,h)*0.55);
-  cg.addColorStop(0,"rgba(100,116,139,0.04)");
-  cg.addColorStop(1,"transparent");
-  ctx.fillStyle=cg; ctx.fillRect(0,0,w,h);
+
+  ctx.globalAlpha = dimmed ? 0.22 : 1;
+  const projected = new Map<string, ProjNode>(nodes.map(n => [n.id, projectNode(n, w, h, view)]));
 
   const nm=new Map(nodes.map(n=>[n.id,n]));
   edges.forEach(e=>{
@@ -462,11 +516,12 @@ function drawGraph(
     const NC="#94A3B8";       // base node grey (slate-400)
     const NC_DARK="#64748B";   // emphasis grey (slate-500)
 
-    // Clause nodes: micro dots, skip full pipeline
+    // Clause nodes: micro dots (Document Archive leaves)
     if (n.type==="clause") {
       ctx.save();
-      ctx.beginPath(); ctx.arc(pn.x,pn.y,Math.max(1.2,pn.r*0.42),0,Math.PI*2);
-      ctx.fillStyle=h2r(NC,0.55);
+      if (isH||isS) { ctx.shadowColor="#38BDF8"; ctx.shadowBlur=8; }
+      ctx.beginPath(); ctx.arc(pn.x,pn.y,Math.max(1.4,pn.r*0.5),0,Math.PI*2);
+      ctx.fillStyle=isH||isS?"#7DD3FC":h2r("#94A3B8",0.7);
       ctx.fill(); ctx.restore();
       return;
     }
@@ -565,11 +620,11 @@ function drawGraph(
       ctx.save();
       ctx.font=`${isHub?"600 ":"400 "}${fs}px Inter, sans-serif`;
       ctx.textAlign="center"; ctx.textBaseline="top";
-      ctx.shadowColor="rgba(255,255,255,0.95)"; ctx.shadowBlur=5;
+      ctx.shadowColor="rgba(0,0,0,0.85)"; ctx.shadowBlur=6;
       ctx.fillStyle=
-        n.type==="country" ? "#1E293B"
+        n.type==="country" ? "#F1F5F9"
         : n.type==="pillar" ? n.color
-        : h2r("#334155", isS?1:0.92);
+        : h2r("#CBD5E1", isS?1:0.85);
       ctx.fillText(label,pn.x,pn.y+pn.r+6);
       ctx.restore();
     }
@@ -925,19 +980,20 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
     {id:"api",label:"API Reference",desc:"Endpoints and authentication",icon:Code2},
   ];
 
-  const NAVY = "#1E3A5F";
+  const NAVY = "#60A5FA";     // sharp accent (blue-400) on dark
+  const FG = "#E2E8F0", MUTE = "#64748B", LINE = "rgba(148,163,184,0.14)";
   return (
     <header className="fixed top-0 left-0 right-0 z-50 flex flex-col" style={{height:"56px"}}>
-      <div style={{height:"3px",flexShrink:0,background:NAVY}}/>
+      <div style={{height:"2px",flexShrink:0,background:NAVY}}/>
       <div
         className="flex items-center flex-1 w-full px-6"
-        style={{background:"#FFFFFF",borderBottom:"1px solid #E5E9F0",boxShadow:"0 1px 2px rgba(15,23,42,0.04)"}}
+        style={{background:"rgba(8,9,12,0.82)",backdropFilter:"blur(14px)",borderBottom:`1px solid ${LINE}`}}
       >
         <button onClick={() => onNav("dashboard")} className="flex items-center gap-3 shrink-0 mr-8">
-          <img src={ailaLogo} alt="AILA" style={{height:"22px",width:"auto",objectFit:"contain"}}/>
+          <img src={ailaLogo} alt="AILA" style={{height:"22px",width:"auto",objectFit:"contain",filter:"brightness(0) invert(1)"}}/>
           <span
             className="hidden md:block text-xs font-semibold tracking-widest uppercase pl-3 border-l"
-            style={{color:"#94A3B8",borderColor:"#E5E9F0",fontFamily:"IBM Plex Sans, sans-serif",letterSpacing:"0.12em"}}
+            style={{color:MUTE,borderColor:LINE,fontFamily:"IBM Plex Sans, sans-serif",letterSpacing:"0.14em"}}
           >
             Regulatory Intelligence
           </span>
@@ -954,7 +1010,7 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
                 key={item.id}
                 onClick={() => onNav(item.id)}
                 className="flex items-center gap-2 px-4 text-sm font-medium transition-colors h-full"
-                style={{color:isA?NAVY:"#64748B",borderBottom:isA?`2px solid ${NAVY}`:"2px solid transparent"}}
+                style={{color:isA?FG:MUTE,borderBottom:isA?`2px solid ${NAVY}`:"2px solid transparent"}}
               >
                 <Icon size={13} />
                 {item.label}
@@ -963,13 +1019,13 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
           })}
         </nav>
 
-        <div className="mx-4 shrink-0" style={{width:"1px",height:"20px",background:"#E5E9F0"}} />
+        <div className="mx-4 shrink-0" style={{width:"1px",height:"20px",background:LINE}} />
 
         <div ref={menuRef} className="relative shrink-0 h-full flex items-center">
           <button
             onClick={() => setMenuOpen((o) => !o)}
             className="flex items-center gap-2 px-4 text-sm font-medium transition-colors h-full"
-            style={{color:toolActive?NAVY:"#64748B",borderBottom:toolActive?`2px solid ${NAVY}`:"2px solid transparent"}}
+            style={{color:toolActive?FG:MUTE,borderBottom:toolActive?`2px solid ${NAVY}`:"2px solid transparent"}}
           >
             <Network size={13} />
             Graph
@@ -982,8 +1038,8 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
               <motion.div
                 initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-6}}
                 transition={{duration:0.12}}
-                className="absolute right-0 top-full w-64 rounded-lg py-1 z-50"
-                style={{marginTop:"4px",background:"#FFFFFF",border:"1px solid #E5E9F0",boxShadow:"0 8px 28px rgba(15,23,42,0.12),0 2px 8px rgba(15,23,42,0.06)"}}
+                className="absolute right-0 top-full w-64 rounded-lg py-1 z-50 overflow-hidden"
+                style={{marginTop:"6px",background:"rgba(15,17,21,0.96)",backdropFilter:"blur(14px)",border:`1px solid ${LINE}`,boxShadow:"0 16px 40px rgba(0,0,0,0.55)"}}
               >
                 {TOOLS.map((tool) => {
                   const Icon = tool.icon;
@@ -992,15 +1048,15 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
                     <button
                       key={tool.id}
                       onClick={() => { onNav(tool.id); setMenuOpen(false); }}
-                      className="w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50"
-                      style={{borderLeft:`3px solid ${isA?NAVY:"transparent"}`}}
+                      className="w-full flex items-start gap-3 px-4 py-3 text-left transition-colors"
+                      style={{borderLeft:`2px solid ${isA?NAVY:"transparent"}`,background:isA?"rgba(96,165,250,0.08)":"transparent"}}
                     >
-                      <Icon size={14} style={{color:isA?NAVY:"#94A3B8",marginTop:"2px",flexShrink:0}}/>
+                      <Icon size={14} style={{color:isA?NAVY:MUTE,marginTop:"2px",flexShrink:0}}/>
                       <div>
-                        <div className="text-sm font-medium leading-tight" style={{color:isA?NAVY:"#1E293B"}}>
+                        <div className="text-sm font-medium leading-tight" style={{color:isA?"#F1F5F9":FG}}>
                           {tool.label}
                         </div>
-                        <div className="text-xs mt-0.5" style={{color:"#94A3B8"}}>{tool.desc}</div>
+                        <div className="text-xs mt-0.5" style={{color:MUTE}}>{tool.desc}</div>
                       </div>
                     </button>
                   );
@@ -3277,7 +3333,7 @@ export default function App() {
   };
 
   return (
-    <div className="relative w-full h-screen overflow-hidden" style={{background:"#FFFFFF",fontFamily:"Inter, sans-serif"}}>
+    <div className="relative w-full h-screen overflow-hidden" style={{background:"#08090C",fontFamily:"Inter, sans-serif"}}>
       {viz==="globe" ? (
         <React.Suspense fallback={<div className="absolute inset-0 flex items-center justify-center"><span className="text-xs tracking-widest uppercase" style={{color:"#94A3B8"}}>Loading globe…</span></div>}>
           <GlobeView onSelect={onGraphSelect} dimmed={!isDash}/>
@@ -3290,11 +3346,11 @@ export default function App() {
 
       {/* Graph / Globe toggle */}
       {isDash && (
-        <div className="fixed z-40 flex rounded-full overflow-hidden" style={{top:"68px",right:"20px",border:"1px solid #E5E9F0",background:"rgba(255,255,255,0.9)",backdropFilter:"blur(10px)",boxShadow:"0 4px 14px rgba(15,23,42,0.08)"}}>
+        <div className="fixed z-40 flex rounded-full overflow-hidden" style={{top:"68px",right:"20px",border:"1px solid rgba(148,163,184,0.16)",background:"rgba(15,17,21,0.7)",backdropFilter:"blur(10px)",boxShadow:"0 4px 16px rgba(0,0,0,0.5)"}}>
           {(["graph","globe"] as const).map(m=>(
             <button key={m} onClick={()=>{setViz(m); setSelNode(null);}}
               className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold transition-colors"
-              style={{background:viz===m?"#1E3A5F":"transparent",color:viz===m?"#fff":"#64748B",border:"none",cursor:"pointer"}}>
+              style={{background:viz===m?"#60A5FA":"transparent",color:viz===m?"#0B0F14":"#94A3B8",border:"none",cursor:"pointer"}}>
               {m==="graph"?<Network size={12}/>:<Globe size={12}/>}{m==="graph"?"Graph":"Globe"}
             </button>
           ))}

@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { loadSources, loadPolicies, findSource, findSourceByUrl } from "./sources.js";
 import { scrapeAll, scrapeSource } from "./scraper.js";
 import { scanAll, resolveSource, refreshHealth, activeUrlSet, healthReady, healthState } from "./scanner.js";
-import { buildGraph } from "./graph.js";
+import { buildGraph, attachClauses } from "./graph.js";
 import { classifyInstrument, classifierEnabled } from "./classify.js";
 import { runSimulation, simulationOptions, parseScenario } from "./simulate.js";
 import { diffSource, diffUrls } from "./diff.js";
@@ -109,14 +109,16 @@ app.get("/policies", (req, res) => {
  */
 app.get("/graph", async (req, res) => {
   const STALE_MS = 15 * 60 * 1000;
-  if (req.query.all === "1") return res.json({ ...buildGraph(), mode: "all" });
+  // every graph includes Document-Archive clauses as leaf nodes (cap keeps the sim snappy)
+  const clauses = await loadClauses({ limit: 600 }).catch(() => []);
+  if (req.query.all === "1") return res.json({ ...attachClauses(buildGraph(), clauses), mode: "all" });
 
   if (!healthReady()) {
     await refreshHealth(loadSources()); // first request warms the cache
   } else if (Date.now() - healthState().scannedAt > STALE_MS) {
     void refreshHealth(loadSources()); // stale → refresh in background, serve cached now
   }
-  res.json({ ...buildGraph(activeUrlSet()), mode: "active", health: healthState() });
+  res.json({ ...attachClauses(buildGraph(activeUrlSet()), clauses), mode: "active", health: healthState() });
 });
 
 // =============================================================================
