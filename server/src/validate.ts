@@ -115,6 +115,9 @@ For each relevant provision return an object:
 - "sourceIndex": the [S#] number the provision came from (1-based), or null
 - "confidence": 0-1 (High≈0.85+, Medium≈0.5-0.85, Low<0.5)
 - "notes": validation findings, amendment/version discrepancies, or why text couldn't be retrieved
+- "coverage": the instrument's sectoral/subject-matter scope — e.g. "Cross-cutting", "Telecommunications services", "Personal Health Data", "Financial sector" — else "Cross-cutting" if it applies broadly
+- "timeframe": the instrument's temporal scope as stated in the source, e.g. "Since 2023", "Since 1988, last amended in 2024", else null
+- "impactComments": one short sentence on the practical impact of this provision on cross-border digital trade or compliance (e.g. "Raises compliance cost for foreign processors"), else null
 
 Extract up to ${MAX_PROVISIONS}. A provision mapping to several indicators → one object per indicator.
 Do NOT use INVALID merely because exact verbatim text could not be retrieved — use INVALID ONLY when there is positive evidence the seed law/section is repealed, superseded, or mis-cited. If the law is confirmed to exist and apply but you could not pin the exact section text, use VERIFIED (or UPDATED) with LOWER confidence and a Notes flag, and leave verbatim "".
@@ -162,6 +165,9 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
       mappingRationale: undefined, sourceUrl: seed.seedUrl, confidence: 0.2,
       notes: "Flagged, not populated — no official source retrievable this session (portal block / dead link). Needs manual fetch.",
       seed,
+      // No Gemini call happened in this branch, so coverage/timeframe/impactComments
+      // can only come from the seed row itself (best-effort) — never fabricated.
+      coverage: seed.context || undefined,
     }));
   } else {
     const provisions = await callGemini(seed, sources);
@@ -192,12 +198,16 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
           mappingRationale: typeof p.mappingRationale === "string" ? p.mappingRationale.slice(0, 300) : undefined,
           sourceUrl, confidence: typeof p.confidence === "number" ? Math.max(0, Math.min(1, p.confidence)) : 0.5,
           notes, seed,
+          coverage: typeof p.coverage === "string" && p.coverage ? p.coverage : (seed.context || undefined),
+          timeframe: typeof p.timeframe === "string" && p.timeframe ? p.timeframe : undefined,
+          impactComments: typeof p.impactComments === "string" && p.impactComments ? p.impactComments : undefined,
         } as ValidationRow;
       });
     if (!rows.length) {
       rows = [{ dbRow, economy: seed.economy, lawName: seed.lawName, lawNumber: seed.lawNumber,
         indicatorId: seed.indicators?.[0], discoveryTag: undefined, verbatim: "", confidence: 0.25,
-        notes: "Sources retrieved but no provision could be validated for the seed indicator(s). Needs manual review.", seed }];
+        notes: "Sources retrieved but no provision could be validated for the seed indicator(s). Needs manual review.", seed,
+        coverage: seed.context || undefined }];
     }
   }
 

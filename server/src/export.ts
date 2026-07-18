@@ -97,8 +97,8 @@ const COLUMN_REGISTRY: ColumnDef[] = [
   },
   {
     // Document-level scope (e.g. "Cross-cutting", "Telecommunications services"), stamped onto
-    // every clause of a document by extract.ts; populated by validate.ts for validation rows
-    // once that pipeline's prompt is extended (tracked separately — not wired yet there).
+    // every clause of a document by extract.ts, and onto every provision by validate.ts's
+    // Gemini prompt (falls back to the seed row's `context` field when no source was retrieved).
     id: "coverage", label: "Coverage", group: "Legal Instrument Identification",
     getValue: (r) => r.coverage ?? "",
   },
@@ -146,8 +146,8 @@ const COLUMN_REGISTRY: ColumnDef[] = [
     getValue: (r) => r.mappingRationale ?? "",
   },
   {
-    // Per-clause practical-impact note; populated by extract.ts's Gemini prompt for clauses.
-    // Not yet wired into validate.ts's provision-validation prompt — same follow-up as Coverage/Timeframe.
+    // Per-clause/per-provision practical-impact note; populated by extract.ts's Gemini
+    // prompt for clauses and by validate.ts's Gemini prompt for validation rows.
     id: "impactComments", label: "Impact or Comments on Acts or Practices", group: "Legal Analysis",
     getValue: (r) => r.impactComments ?? "",
   },
@@ -188,7 +188,36 @@ const COLUMN_REGISTRY: ColumnDef[] = [
 const COLUMN_BY_ID = new Map(COLUMN_REGISTRY.map((c) => [c.id, c]));
 
 /** The columns checked by default in the picker UI — the old mandated Round-1 template. */
-export const DEFAULT_COLUMNS = COLUMN_REGISTRY.filter((c) => c.defaultChecked).map((c) => c.id);
+// NOTE: intentionally NOT derived via COLUMN_REGISTRY.filter(c => c.defaultChecked) —
+// that filter preserves registry/section order (grouped by Context, Legal Instrument
+// ID, etc.), not submission order. The Round-1 template's column ORDER is mandated by
+// ESCAP, so this list is spelled out explicitly, id-for-id, matching the pre-refactor
+// ROUND1_HEADERS order exactly:
+//   Economy, Law Name, Law Number/Ref, Last Amended, Indicator ID, Article/Section,
+//   Discovery Tag, Location Reference, Verbatim Snippet, Mapping Rationale, Source URL,
+//   Confidence, Notes
+export const DEFAULT_COLUMNS = [
+  "economy", "lawName", "lawNumber", "lastAmended", "indicatorId", "articleSection",
+  "discoveryTag", "locationReference", "verbatimSnippet", "mappingRationale", "sourceUrl",
+  "confidence", "notes",
+];
+
+// Guard against DEFAULT_COLUMNS (submission order) and the registry's `defaultChecked`
+// flags (picker pre-check state) drifting apart — same *set* of ids, different array,
+// so nothing enforces that at the type level. Fails loudly at import time instead of
+// silently mis-checking boxes in the picker or dropping a mandated column.
+{
+  const checkedSet = new Set(COLUMN_REGISTRY.filter((c) => c.defaultChecked).map((c) => c.id));
+  const defaultSet = new Set(DEFAULT_COLUMNS);
+  const missing = [...checkedSet].filter((id) => !defaultSet.has(id));
+  const extra = [...defaultSet].filter((id) => !checkedSet.has(id));
+  if (missing.length || extra.length) {
+    throw new Error(
+      `DEFAULT_COLUMNS / defaultChecked mismatch — missing: [${missing.join(", ")}], extra: [${extra.join(", ")}]. ` +
+      `Update both COLUMN_REGISTRY's defaultChecked flags and the DEFAULT_COLUMNS order list together.`,
+    );
+  }
+}
 
 /** For the frontend picker: id/label/group/defaultChecked, grouped for display. */
 export function listColumns() {

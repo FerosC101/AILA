@@ -17,7 +17,7 @@ import { initDb, upsertSources, dbStats, loadClauses,
 import { extractSource, extractorEnabled, extractAll, batchStatus, extractZone1 } from "./extract.js";
 import { analyzeDocument } from "./engine.js";
 import { processUpload } from "./upload.js";
-import { clausesCsv, round1Csv, round1Json } from "./export.js";
+import { clausesCsv, round1Csv, round1Json, listColumns, DEFAULT_COLUMNS, exportCsv, exportJson } from "./export.js";
 import { costStatus } from "./cost.js";
 import { classifyAuthority } from "./authority.js";
 import { validateSeedRow, validateAll, validateStatus, validatorEnabled, type SeedRow } from "./validate.js";
@@ -339,6 +339,63 @@ app.get("/export/round1.json", async (req, res) => {
   const data = await round1Json({ economy: q("economy"), indicator: q("indicator"), tag: q("tag") });
   res.setHeader("Content-Disposition", `attachment; filename="aila-round1-${new Date().toISOString().slice(0, 10)}.json"`);
   res.json(data);
+});
+
+/**
+ * GET /export/columns — the full column registry for the export picker UI: id, label,
+ * group (one of the six gap-analysis sections), and whether it's checked by default.
+ * Also returns the mandated Round-1 default order and the picker's hard cap.
+ */
+app.get("/export/columns", (_req, res) => {
+  res.json({ columns: listColumns(), defaultColumns: DEFAULT_COLUMNS, maxColumns: 25 });
+});
+
+/**
+ * GET /export/custom.csv — export with an explicit column selection (up to 25 of the
+ * registry's ids, in the order given). ?source=clauses|validations (default clauses).
+ * ?columns=id1,id2,... — omitted/empty falls back to DEFAULT_COLUMNS (Round-1 13-col set).
+ * Clauses filters: ?jurisdiction= ?type= ?sourceId=. Validations filters: ?economy= ?indicator= ?tag=.
+ */
+app.get("/export/custom.csv", async (req, res) => {
+  const source: "clauses" | "validations" = req.query.source === "validations" ? "validations" : "clauses";
+  const columnsParam = req.query.columns as string | undefined;
+  const columns = columnsParam ? columnsParam.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+  const q = (k: string) => req.query[k] as string | undefined;
+  try {
+    const csv = await exportCsv({
+      source,
+      columns,
+      filter: source === "validations"
+        ? { economy: q("economy"), indicator: q("indicator"), tag: q("tag") }
+        : { jurisdiction: q("jurisdiction"), type: q("type"), sourceId: q("sourceId") },
+    });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="aila-${source}-custom-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send("﻿" + csv); // BOM so Excel reads UTF-8 correctly
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** GET /export/custom.json — same column selection/validation/filters as /export/custom.csv, JSON output. */
+app.get("/export/custom.json", async (req, res) => {
+  const source: "clauses" | "validations" = req.query.source === "validations" ? "validations" : "clauses";
+  const columnsParam = req.query.columns as string | undefined;
+  const columns = columnsParam ? columnsParam.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+  const q = (k: string) => req.query[k] as string | undefined;
+  try {
+    const rows = await exportJson({
+      source,
+      columns,
+      filter: source === "validations"
+        ? { economy: q("economy"), indicator: q("indicator"), tag: q("tag") }
+        : { jurisdiction: q("jurisdiction"), type: q("type"), sourceId: q("sourceId") },
+    });
+    res.setHeader("Content-Disposition", `attachment; filename="aila-${source}-custom-${new Date().toISOString().slice(0, 10)}.json"`);
+    res.json(rows);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 // =============================================================================

@@ -2995,6 +2995,15 @@ function MemoryLayer() {
   const [val,setVal]=React.useState<number|null>(null);
   const [batch,setBatch]=React.useState<any>(null);
 
+  // column picker: registry fetched from the backend (single source of truth for
+  // ids/labels/groups/default order — never hardcoded on the frontend).
+  const [columnMeta,setColumnMeta]=React.useState<{id:string;label:string;group:string;defaultChecked?:boolean}[]>([]);
+  const [defaultColumns,setDefaultColumns]=React.useState<string[]>([]);
+  const [maxColumns,setMaxColumns]=React.useState(25);
+  const [pickerOpen,setPickerOpen]=React.useState(false);
+  const [pickerSource,setPickerSource]=React.useState<"clauses"|"validations">("clauses");
+  const [selectedCols,setSelectedCols]=React.useState<string[]>([]);
+
   const loadClauses=React.useCallback(()=>{
     if(!API) return;
     const qs=new URLSearchParams();
@@ -3007,8 +3016,45 @@ function MemoryLayer() {
     if(!API){ setError("Backend URL not configured."); setLoading(false); return; }
     fetch(`${API}/health`).then(r=>r.json()).then(setHealth).catch(()=>{});
     fetch(`${API}/validations`).then(r=>r.json()).then(d=>setVal(d?.stats?.total ?? 0)).catch(()=>{});
+    fetch(`${API}/export/columns`).then(r=>r.json()).then(d=>{
+      setColumnMeta(Array.isArray(d?.columns)?d.columns:[]);
+      setDefaultColumns(Array.isArray(d?.defaultColumns)?d.defaultColumns:[]);
+      setSelectedCols(Array.isArray(d?.defaultColumns)?d.defaultColumns:[]);
+      if(typeof d?.maxColumns==="number") setMaxColumns(d.maxColumns);
+    }).catch(()=>{});
     loadClauses();
   },[API,loadClauses]);
+
+  // Column ids in the order the picker displays them (registry/section order) — used
+  // so a custom selection always exports in a stable, predictable column order.
+  const orderedSelectedCols=React.useMemo(
+    ()=>columnMeta.filter(c=>selectedCols.includes(c.id)).map(c=>c.id),
+    [columnMeta,selectedCols],
+  );
+
+  const toggleCol=(id:string)=>{
+    setSelectedCols(prev=>{
+      if(prev.includes(id)) return prev.filter(x=>x!==id);
+      if(prev.length>=maxColumns) return prev; // hard cap — silently ignore further checks
+      return [...prev,id];
+    });
+  };
+
+  const openPicker=(source:"clauses"|"validations")=>{
+    setPickerSource(source);
+    setPickerOpen(true);
+  };
+
+  const customExportUrl=(format:"csv"|"json")=>{
+    const qs=new URLSearchParams();
+    qs.set("source",pickerSource);
+    qs.set("columns",orderedSelectedCols.join(","));
+    if(pickerSource==="clauses"){
+      if(jur) qs.set("jurisdiction",jur);
+      if(ctype) qs.set("type",ctype);
+    }
+    return `${API}/export/custom.${format}?${qs.toString()}`;
+  };
 
   // batch extraction progress polling
   const runBatch=async()=>{
@@ -3075,6 +3121,11 @@ function MemoryLayer() {
           style={{background:"#fff",color:"#6D28D9",border:"1px solid #6D28D9",textDecoration:"none"}}>
           <Download size={14}/>JSON
         </a>
+        <button onClick={()=>openPicker("clauses")} title="Pick any of the 25 compulsory-schema columns, in any combination, for clauses or validated provisions"
+          className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-semibold"
+          style={{background:"#fff",color:"#334155",border:"1px solid #E5E9F0"}}>
+          <Settings size={14}/>Choose columns…
+        </button>
         <button onClick={runBatch} disabled={batch?.running}
           className="flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-semibold"
           style={{background:batch?.running?"#94A3B8":"#1E3A5F",color:"#fff",border:"none",cursor:batch?.running?"default":"pointer"}}>
@@ -3144,6 +3195,105 @@ function MemoryLayer() {
             </div>
           );
         })}
+      </div>
+      {pickerOpen&&(
+        <ColumnPickerModal
+          columnMeta={columnMeta}
+          selectedCols={selectedCols}
+          maxColumns={maxColumns}
+          defaultColumns={defaultColumns}
+          source={pickerSource}
+          onSourceChange={setPickerSource}
+          onToggle={toggleCol}
+          onReset={()=>setSelectedCols(defaultColumns)}
+          onClear={()=>setSelectedCols([])}
+          onClose={()=>setPickerOpen(false)}
+          csvUrl={customExportUrl("csv")}
+          jsonUrl={customExportUrl("json")}
+        />
+      )}
+    </div>
+  );
+}
+
+// Column picker: checkbox list grouped by the six gap-analysis sections, capped at
+// `maxColumns`. Column ids/labels/groups/default order all come from the backend
+// registry (GET /export/columns) — nothing about the 25 fields is hardcoded here.
+function ColumnPickerModal({columnMeta,selectedCols,maxColumns,defaultColumns,source,onSourceChange,onToggle,onReset,onClear,onClose,csvUrl,jsonUrl}:{
+  columnMeta:{id:string;label:string;group:string;defaultChecked?:boolean}[];
+  selectedCols:string[];
+  maxColumns:number;
+  defaultColumns:string[];
+  source:"clauses"|"validations";
+  onSourceChange:(s:"clauses"|"validations")=>void;
+  onToggle:(id:string)=>void;
+  onReset:()=>void;
+  onClear:()=>void;
+  onClose:()=>void;
+  csvUrl:string;
+  jsonUrl:string;
+}) {
+  const groups=[...new Set(columnMeta.map(c=>c.group))];
+  const atCap=selectedCols.length>=maxColumns;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(15,23,42,0.45)"}} onClick={onClose}>
+      <div className="rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" style={{background:"#fff"}} onClick={e=>e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4" style={{borderBottom:"1px solid #E5E9F0"}}>
+          <div>
+            <h2 className="text-base font-semibold" style={{color:"#0F172A"}}>Choose export columns</h2>
+            <p className="text-xs mt-0.5" style={{color:"#64748B"}}>{selectedCols.length} / {maxColumns} selected</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1.5" style={{color:"#64748B"}}><X size={18}/></button>
+        </div>
+
+        <div className="px-5 py-3 flex items-center gap-2 flex-wrap" style={{borderBottom:"1px solid #E5E9F0"}}>
+          <span className="text-xs font-medium" style={{color:"#64748B"}}>Source:</span>
+          {(["clauses","validations"] as const).map(s=>(
+            <button key={s} onClick={()=>onSourceChange(s)}
+              className="rounded-lg px-3 py-1 text-xs font-semibold"
+              style={source===s?{background:"#1E3A5F",color:"#fff"}:{background:"#F1F5F9",color:"#334155"}}>
+              {s==="clauses"?"Extracted clauses":"Validated provisions (Round-1)"}
+            </button>
+          ))}
+          <div className="flex-1"/>
+          <button onClick={onReset} className="text-xs font-semibold" style={{color:"#1E3A5F"}}>Reset to Round-1 default ({defaultColumns.length})</button>
+          <button onClick={onClear} className="text-xs font-semibold" style={{color:"#B91C1C"}}>Clear all</button>
+        </div>
+
+        <div className="overflow-y-auto px-5 py-3 flex-1">
+          {columnMeta.length===0&&<p className="text-sm" style={{color:"#94A3B8"}}>Loading columns…</p>}
+          {groups.map(g=>(
+            <div key={g} className="mb-4">
+              <p className="text-xs font-bold uppercase tracking-wider mb-1.5" style={{color:"#94A3B8"}}>{g}</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                {columnMeta.filter(c=>c.group===g).map(c=>{
+                  const checked=selectedCols.includes(c.id);
+                  const disabled=!checked&&atCap;
+                  return (
+                    <label key={c.id} className="flex items-center gap-2 text-sm py-0.5" style={{color:disabled?"#CBD5E1":"#334155",cursor:disabled?"not-allowed":"pointer"}}>
+                      <input type="checkbox" checked={checked} disabled={disabled} onChange={()=>onToggle(c.id)}/>
+                      {c.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2 px-5 py-4" style={{borderTop:"1px solid #E5E9F0"}}>
+          <div className="flex-1"/>
+          <a href={csvUrl} onClick={e=>{if(!selectedCols.length)e.preventDefault();}}
+            className="flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-semibold"
+            style={selectedCols.length?{background:"#1E3A5F",color:"#fff",textDecoration:"none"}:{background:"#94A3B8",color:"#fff",textDecoration:"none",cursor:"not-allowed"}}>
+            <Download size={14}/>Export CSV
+          </a>
+          <a href={jsonUrl} onClick={e=>{if(!selectedCols.length)e.preventDefault();}}
+            className="flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-semibold"
+            style={selectedCols.length?{background:"#fff",color:"#6D28D9",border:"1px solid #6D28D9",textDecoration:"none"}:{background:"#fff",color:"#94A3B8",border:"1px solid #E5E9F0",textDecoration:"none",cursor:"not-allowed"}}>
+            <Download size={14}/>Export JSON
+          </a>
+        </div>
       </div>
     </div>
   );
