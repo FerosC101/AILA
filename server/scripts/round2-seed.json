@@ -1,0 +1,45 @@
+[
+  {
+    "economy": "Thailand",
+    "lawName": "Personal Data Protection Act B.E. 2562 (2019)",
+    "lawNumber": "B.E. 2562",
+    "pillar": "Cross-border data policies",
+    "context": "cross-border transfer of personal data to a foreign country; adequate data protection standard and appropriate safeguards",
+    "seedUrl": "https://www.etda.or.th/getattachment/9d370f25-f37a-4b7c-b661-df8be2d284ee/PDPA-English-Version.pdf.aspx"
+  },
+  {
+    "economy": "Thailand",
+    "lawName": "Personal Data Protection Act B.E. 2562 (2019)",
+    "lawNumber": "B.E. 2562",
+    "pillar": "Domestic data protection & privacy",
+    "context": "lawful basis and consent for collection, use and disclosure of personal data; security obligations of the data controller"
+  },
+  {
+    "economy": "Indonesia",
+    "lawName": "Law of the Republic of Indonesia Number 27 of 2022 on Personal Data Protection",
+    "lawNumber": "Law No. 27 of 2022",
+    "pillar": "Cross-border data policies",
+    "context": "transfer of personal data outside the jurisdiction of the Republic of Indonesia; adequacy of protection and safeguards"
+  },
+  {
+    "economy": "Indonesia",
+    "lawName": "Law of the Republic of Indonesia Number 27 of 2022 on Personal Data Protection",
+    "lawNumber": "Law No. 27 of 2022",
+    "pillar": "Domestic data protection & privacy",
+    "context": "rights of personal data subjects and obligations of the personal data controller"
+  },
+  {
+    "economy": "Vietnam",
+    "lawName": "Decree No. 13/2023/ND-CP on Personal Data Protection",
+    "lawNumber": "13/2023/ND-CP",
+    "pillar": "Cross-border data policies",
+    "context": "cross-border transfer of personal data of Vietnamese citizens; transfer impact assessment dossier"
+  },
+  {
+    "economy": "Vietnam",
+    "lawName": "Law on Cyber Security 2018",
+    "lawNumber": "24/2018/QH14",
+    "pillar": "Domestic data protection & privacy",
+    "context": "data localization and local storage of user data within Vietnam"
+  }
+]

@@ -10,7 +10,7 @@ import {
   Link,
   FileText, Scale,
   Heart, Share2, ChevronLeft, Eye, MessageCircle,
-  Download, Paperclip,
+  Download, Paperclip, Camera,
 } from "lucide-react";
 
 // ==================== TYPES ====================
@@ -202,6 +202,17 @@ const shortLabelFor = (label: string) => {
   if (acronym) return acronym[1];
   return label.length > 16 ? label.slice(0, 15) + "…" : label;
 };
+
+// Small responsive helper — true below `bp` px (default tablet breakpoint).
+function useIsMobile(bp = 768): boolean {
+  const [m, setM] = useState(typeof window !== "undefined" && window.innerWidth < bp);
+  useEffect(() => {
+    const on = () => setM(window.innerWidth < bp);
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, [bp]);
+  return m;
+}
 
 // Palette for a black canvas — dark glass hubs, pillar-coded accents (matches the globe).
 const NODE_PALETTE = {
@@ -1009,7 +1020,7 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 flex justify-center px-4" style={{paddingTop:"10px",pointerEvents:"none"}}>
       <div
-        className="flex items-center w-full max-w-6xl px-5"
+        className="flex items-center w-full max-w-6xl px-3 md:px-5"
         style={{
           pointerEvents:"auto",
           height:"50px",
@@ -1021,7 +1032,7 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
           boxShadow:"0 10px 36px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.07)",
         }}
       >
-        <button onClick={() => onNav("dashboard")} className="flex items-center gap-3 shrink-0 mr-8">
+        <button onClick={() => onNav("dashboard")} className="flex items-center gap-3 shrink-0 mr-2 md:mr-8">
           <img src={ailaLogo} alt="AILA" style={{height:"22px",width:"auto",objectFit:"contain",filter:"brightness(0) invert(1)"}}/>
           <span
             className="hidden md:block text-xs font-semibold tracking-widest uppercase pl-3 border-l"
@@ -1041,26 +1052,28 @@ function TopNav({ cur, onNav }: { cur: ViewId; onNav: (v: ViewId) => void }) {
               <button
                 key={item.id}
                 onClick={() => onNav(item.id)}
-                className="flex items-center gap-2 px-3.5 py-1.5 mx-0.5 text-sm font-medium transition-colors rounded-lg"
+                title={item.label}
+                className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-3.5 py-1.5 mx-0.5 text-sm font-medium transition-colors rounded-lg"
                 style={{color:isA?FG:MUTE,background:isA?"rgba(96,165,250,0.14)":"transparent",border:`1px solid ${isA?"rgba(96,165,250,0.3)":"transparent"}`}}
               >
                 <Icon size={13} />
-                {item.label}
+                <span className="hidden md:inline">{item.label}</span>
               </button>
             );
           })}
         </nav>
 
-        <div className="mx-4 shrink-0" style={{width:"1px",height:"20px",background:LINE}} />
+        <div className="mx-2 md:mx-4 shrink-0" style={{width:"1px",height:"20px",background:LINE}} />
 
         <div ref={menuRef} className="relative shrink-0 h-full flex items-center">
           <button
             onClick={() => setMenuOpen((o) => !o)}
-            className="flex items-center gap-2 px-3.5 py-1.5 text-sm font-medium transition-colors rounded-lg"
+            title="Graph & tools"
+            className="flex items-center gap-1.5 md:gap-2 px-2.5 md:px-3.5 py-1.5 text-sm font-medium transition-colors rounded-lg"
             style={{color:toolActive?FG:MUTE,background:toolActive?"rgba(96,165,250,0.14)":"transparent",border:`1px solid ${toolActive?"rgba(96,165,250,0.3)":"transparent"}`}}
           >
             <Network size={13} />
-            Graph
+            <span className="hidden md:inline">Graph</span>
             <ChevronRight size={11}
               style={{transform:menuOpen?"rotate(90deg)":"rotate(0deg)",transition:"transform 0.15s"}}/>
           </button>
@@ -1821,7 +1834,7 @@ function DiffEngine() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-6 gap-2 mb-5">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 mb-5">
             {["Low","Medium","High"].map((f,i)=>(
               <div key={f} className="col-span-2 rounded-xl p-3" style={{background:"#0B0F17",border:"1px solid rgba(255,255,255,0.1)"}}>
                 <div className="text-xs" style={{color:"#9AA3B4"}}>Friction</div>
@@ -1844,7 +1857,7 @@ function DiffEngine() {
               </span>
             </div>
 
-            <div className="grid grid-cols-6 gap-0">
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-0">
               {rows.map(r=>{
                 const fc=frictionColor(r.friction);
                 return (
@@ -1922,6 +1935,7 @@ const NAVY="#60A5FA";  // shared blue accent for the dark pages (was brand navy 
 
 function SimulationSandbox({ seedText, onSeedConsumed, onAskAI }: { seedText?:string|null; onSeedConsumed?:()=>void; onAskAI?:(q:string)=>void }={}) {
   const base=(import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
+  const isMobile=useIsMobile();
   const [opt,setOpt]=useState<SimOptions|null>(null);
   const [nl,setNl]=useState("");
   const [businessType,setBusinessType]=useState("Health-tech SaaS");
@@ -2011,7 +2025,7 @@ function SimulationSandbox({ seedText, onSeedConsumed, onAskAI }: { seedText?:st
         </div>
       </div>
 
-      <div className="grid gap-6" style={{gridTemplateColumns:"340px 1fr"}}>
+      <div className="grid gap-6" style={{gridTemplateColumns:isMobile?"1fr":"340px 1fr"}}>
         {/* ===== scenario form ===== */}
         <div className="rounded-xl p-5 self-start" style={{background:"#0B0F17",border:"1px solid rgba(255,255,255,0.1)"}}>
           <Field label="Business type">
@@ -2122,7 +2136,7 @@ function SimulationSandbox({ seedText, onSeedConsumed, onAskAI }: { seedText?:st
                       <div className="text-xs" style={{color:"#94A3B8"}}>{j.friction} friction</div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-widest mb-1.5" style={{color:"#94A3B8"}}>Obligations</p>
                       {j.obligations.length?(
@@ -2315,6 +2329,7 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
   const serif = "Georgia, 'Times New Roman', serif";
   const frictionColor:Record<string,string>={Low:"#34D399",Medium:"#F59E0B",High:"#F87171"};
   const A = ARTICLE;
+  const isMobile = useIsMobile();
 
   // Live regional comparison (derived from the DB via /transfer-rules).
   const [regionRules,setRegionRules]=useState<TransferRule[]>([]);
@@ -2329,6 +2344,34 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
   const focus=regionRules.find(rr=>hay.includes(rr.name.toLowerCase()))||null;
   const otherRules=regionRules.filter(rr=>rr!==focus);
   const provisions=result?.citations??[];   // real cited provisions for THIS answer
+
+  // ---- Export + Share ----
+  const [copied,setCopied]=useState(false);
+  const exportArticle=()=>{
+    const md=[
+      `# ${query}`,``,
+      result?.verdict?`**Verdict:** ${result.verdict}`:``,
+      result?`**Confidence:** ${Math.round(result.confidence*100)}%`:``,``,
+      result?.summary||result?.answer||"",``,
+      result?.keyPoints?.length?`## Key Points\n`+result.keyPoints.map((k,i)=>`${i+1}. **${k.heading}** — ${k.detail||""}`).join("\n"):``,
+      result?.risks?.length?`\n## Risks\n`+result.risks.map(x=>`- ${x}`).join("\n"):``,
+      result?.recommendations?.length?`\n## Recommendations\n`+result.recommendations.map(x=>`- ${x}`).join("\n"):``,
+      provisions.length?`\n## Cited Provisions\n`+provisions.map(c=>`- [${c.n}] ${c.instrument} (${c.jurisdiction}) — ${c.snippet}\n  ${c.url}`).join("\n"):``,
+      `\n---\nGenerated by AILA · ${new Date().toISOString()}`,
+    ].filter(Boolean).join("\n");
+    const slug=query.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,50)||"analysis";
+    downloadTextFile(`aila-${slug}.md`, md);
+  };
+  const shareArticle=async()=>{
+    const url=typeof location!=="undefined"?location.href:"";
+    try{ if((navigator as any).share){ await (navigator as any).share({title:`AILA — ${query}`,text:(result?.summary||query).slice(0,200),url}); return; } }catch{ return; }
+    try{ await navigator.clipboard.writeText(url||query); setCopied(true); setTimeout(()=>setCopied(false),1800); }catch{}
+  };
+  const tweetArticle=()=>{
+    const url=encodeURIComponent(typeof location!=="undefined"?location.href:"");
+    const text=encodeURIComponent(`AILA regulatory analysis: ${query}`);
+    window.open(`https://twitter.com/intent/tweet?text=${text}&url=${url}`,"_blank","noopener");
+  };
 
   return (
     <div className="aila-dark-page" style={{position:"absolute",inset:0,background:"#0B0F17",overflowY:"auto",zIndex:50,fontFamily:"Inter, sans-serif"}}>
@@ -2350,7 +2393,7 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
           <span style={{display:"inline-block",fontSize:"10px",fontWeight:700,letterSpacing:"0.18em",color:"#fff",border:"1px solid rgba(255,255,255,0.5)",borderRadius:"3px",padding:"5px 12px",marginBottom:"22px"}}>
             {result ? (result.grounded ? "GROUNDED ANSWER" : "LOW-CONFIDENCE ANSWER") : "DATA PRIVACY"}
           </span>
-          <h1 style={{fontFamily:serif,fontSize:"42px",lineHeight:1.18,fontWeight:700,color:"#fff",margin:"0 0 22px",letterSpacing:"-0.01em"}}>{query}</h1>
+          <h1 style={{fontFamily:serif,fontSize:isMobile?"26px":"42px",lineHeight:1.2,fontWeight:700,color:"#fff",margin:"0 0 22px",letterSpacing:"-0.01em"}}>{query}</h1>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"22px",color:"rgba(255,255,255,0.85)",fontSize:"12px"}}>
             {result ? (
               <>
@@ -2373,7 +2416,7 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
 
       {/* ===== ARTICLE BODY ===== */}
       <div style={{maxWidth:"940px",margin:"0 auto",padding:"56px 28px 0"}}>
-        <div style={{display:"grid",gridTemplateColumns:"190px 1fr",gap:"44px",alignItems:"start"}}>
+        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"190px 1fr",gap:isMobile?"22px":"44px",alignItems:"start"}}>
           {/* author card */}
           <aside style={{position:"sticky",top:"28px",textAlign:"center",borderRight:"1px solid rgba(255,255,255,0.08)",paddingRight:"24px"}}>
             <div style={{width:"72px",height:"72px",borderRadius:"50%",margin:"0 auto 14px",background:"linear-gradient(135deg,#2563EB,#2563EB)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:"22px",fontFamily:serif}}>{A.author.initials}</div>
@@ -2422,7 +2465,7 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
                 )}
                 {/* risks + recommendations */}
                 {((result.risks&&result.risks.length>0)||(result.recommendations&&result.recommendations.length>0))&&(
-                  <div style={{display:"grid",gridTemplateColumns:(result.risks?.length&&result.recommendations?.length)?"1fr 1fr":"1fr",gap:"14px",marginBottom:"28px"}}>
+                  <div style={{display:"grid",gridTemplateColumns:(!isMobile&&result.risks?.length&&result.recommendations?.length)?"1fr 1fr":"1fr",gap:"14px",marginBottom:"28px"}}>
                     {result.risks&&result.risks.length>0&&(
                       <div style={{borderRadius:"10px",padding:"14px 16px",background:"rgba(185,28,28,0.05)",border:"1px solid rgba(185,28,28,0.18)"}}>
                         <p style={{fontSize:"11px",fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:"#F87171",margin:"0 0 8px",fontFamily:"IBM Plex Sans, sans-serif"}}>Risks</p>
@@ -2444,13 +2487,13 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
                 <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#EEF1F7",margin:"0 0 4px"}}>Evidence Viewer</h2>
                 <p style={{fontSize:"12px",color:"#94A3B8",margin:"0 0 14px"}}>Source text on the left, the extracted citation on the right — audit each claim against its origin.</p>
                 {/* column headers */}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginBottom:"6px"}}>
+                <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:"12px",marginBottom:"6px"}}>
                   <span style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"#94A3B8",fontFamily:"IBM Plex Sans, sans-serif"}}>Source Excerpt</span>
                   <span style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"#94A3B8",fontFamily:"IBM Plex Sans, sans-serif"}}>Extracted Evidence</span>
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
                   {result.citations.map(c=>(
-                    <div key={c.n} style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"10px",overflow:"hidden"}}>
+                    <div key={c.n} style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:"12px",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"10px",overflow:"hidden"}}>
                       {/* LEFT — verbatim source */}
                       <div style={{padding:"12px 14px",borderRight:"1px solid rgba(255,255,255,0.1)",background:"#0B0F17"}}>
                         <div style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"6px"}}>
@@ -2525,7 +2568,7 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
 
       {/* ===== HISTORY / BACKGROUND ===== */}
       <div style={{maxWidth:"940px",margin:"0 auto",padding:"56px 28px 0"}}>
-        <div style={{display:"grid",gridTemplateColumns:"190px 1fr",gap:"44px",alignItems:"start"}}>
+        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"190px 1fr",gap:isMobile?"22px":"44px",alignItems:"start"}}>
           {/* side thumb + caption */}
           <aside style={{textAlign:"left",borderRight:"1px solid rgba(255,255,255,0.08)",paddingRight:"24px"}}>
             <div style={{width:"100%",height:"110px",borderRadius:"4px",background:"linear-gradient(135deg,#141B2A,#0C1119)",display:"flex",alignItems:"center",justifyContent:"center",marginBottom:"12px"}}>
@@ -2582,7 +2625,7 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
               <p style={{fontSize:"13px",color:"#AEB6C6",margin:0,lineHeight:1.55}}>{focus.summary}</p>
             </div>
           )}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>
+          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:"12px"}}>
             {otherRules.map(c=>(
               <div key={c.key} style={{border:"1px solid rgba(255,255,255,0.09)",borderRadius:"12px",padding:"14px",background:"#0B0F17"}}>
                 <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"7px"}}>
@@ -2605,10 +2648,10 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
           <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"20px"}}>
             {A.tags.map(t=>(<span key={t} style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",color:"#9AA3B4",border:"1px solid rgba(15,23,42,0.14)",borderRadius:"4px",padding:"5px 10px"}}>{t}</span>))}
           </div>
-          <div style={{display:"flex",gap:"10px"}}>
-            <button style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",fontWeight:600,color:"#9AA3B4",background:"#0B0F17",border:"1px solid rgba(15,23,42,0.14)",borderRadius:"24px",padding:"8px 16px",cursor:"pointer"}}><Heart size={14}/> Like <span style={{color:"#CBD5E1"}}>· 13</span></button>
-            <button style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",fontWeight:600,color:"#fff",background:"#1877F2",border:"none",borderRadius:"24px",padding:"8px 18px",cursor:"pointer"}}><Share2 size={14}/> Share</button>
-            <button style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",fontWeight:600,color:"#fff",background:"#0EA5E9",border:"none",borderRadius:"24px",padding:"8px 18px",cursor:"pointer"}}><Share2 size={14}/> Tweet</button>
+          <div style={{display:"flex",gap:"10px",flexWrap:"wrap"}}>
+            <button onClick={exportArticle} style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",fontWeight:600,color:"#EEF1F7",background:"#0B0F17",border:"1px solid rgba(255,255,255,0.14)",borderRadius:"24px",padding:"8px 16px",cursor:"pointer"}}><Download size={14}/> Export</button>
+            <button onClick={shareArticle} style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",fontWeight:600,color:"#fff",background:"#2563EB",border:"none",borderRadius:"24px",padding:"8px 18px",cursor:"pointer"}}><Share2 size={14}/> {copied?"Link copied!":"Share"}</button>
+            <button onClick={tweetArticle} style={{display:"inline-flex",alignItems:"center",gap:"7px",fontSize:"12px",fontWeight:600,color:"#fff",background:"#0EA5E9",border:"none",borderRadius:"24px",padding:"8px 18px",cursor:"pointer"}}><Share2 size={14}/> Tweet</button>
           </div>
         </div>
       </div>
@@ -2658,7 +2701,7 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
             <div style={{maxWidth:"1080px",margin:"0 auto",padding:"48px 28px 56px"}}>
               <h2 style={{fontFamily:serif,fontSize:"22px",fontWeight:700,color:"#fff",textAlign:"center",margin:"0 0 8px"}}>Related Sources</h2>
               <p style={{textAlign:"center",color:"#94A3B8",fontSize:"12px",margin:"0 0 32px"}}>The official sources this analysis is grounded in — open to verify each claim.</p>
-              <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(3,cites.length)},1fr)`,gap:"22px"}}>
+              <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":`repeat(${Math.min(3,cites.length)},1fr)`,gap:"22px"}}>
                 {cites.map((c,i)=>{
                   const g = GRAD[i % 3];
                   return (
@@ -2813,6 +2856,7 @@ function SMEAssistant({ onAsk, conversationId, setConversationId, seedQuestion, 
   const [recent,setRecent]=useState<{id:string;title:string;articleCount?:number}[]>([]);
   const end=useRef<HTMLDivElement>(null);
   const fileRef=useRef<HTMLInputElement>(null);
+  const cameraRef=useRef<HTMLInputElement>(null);
   const loadedRef=useRef<string|null>(null);   // which conversation is currently rendered in msgs
   useEffect(()=>{ end.current?.scrollIntoView({behavior:"smooth"}); },[msgs,pending]);
 
@@ -3042,10 +3086,17 @@ function SMEAssistant({ onAsk, conversationId, setConversationId, seedQuestion, 
 
       <div className="mt-4 flex gap-2">
         <input ref={fileRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.tiff,.txt" onChange={onUpload} style={{display:"none"}}/>
-        <button onClick={()=>fileRef.current?.click()} disabled={uploading} title="Upload or scan a document (PDF, image, or text) to add it to the corpus"
-          className="px-3 py-3 rounded-xl flex items-center justify-center"
+        {/* capture="environment" opens the rear camera on phones; on desktop it falls back to a file picker */}
+        <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={onUpload} style={{display:"none"}}/>
+        <button onClick={()=>fileRef.current?.click()} disabled={uploading} title="Upload a document (PDF, image, or text) to add it to the corpus"
+          className="px-3 py-3 rounded-xl flex items-center justify-center shrink-0"
           style={{background:"#0B0F17",border:"1px solid rgba(255,255,255,0.12)",cursor:uploading?"default":"pointer"}}>
           {uploading?<span className="w-4 h-4 rounded-full animate-spin" style={{border:"2px solid #CBD5E1",borderTopColor:"#2563EB"}}/>:<Paperclip size={16} style={{color:"#9AA3B4"}}/>}
+        </button>
+        <button onClick={()=>cameraRef.current?.click()} disabled={uploading} title="Scan a document with your camera (mobile) or capture an image"
+          className="px-3 py-3 rounded-xl flex items-center justify-center shrink-0"
+          style={{background:"#0B0F17",border:"1px solid rgba(255,255,255,0.12)",cursor:uploading?"default":"pointer"}}>
+          <Camera size={16} style={{color:"#9AA3B4"}}/>
         </button>
         <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()}
           placeholder="Ask about regulatory requirements, compliance obligations, or specific laws..."
@@ -3075,7 +3126,7 @@ function CountriesView() {
         <span className="text-xs" style={{color:"#94A3B8"}}>{countries.length} economies · live corpus</span>
       </div>
       {countries.length===0&&<p className="text-sm" style={{color:"#94A3B8"}}>Loading jurisdictions…</p>}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {countries.map((c)=>{
           const coverage=Math.round((c.regulations/maxReg)*100);  // relative corpus coverage
           return (
@@ -3436,7 +3487,7 @@ function ColumnPickerModal({columnMeta,selectedCols,maxColumns,defaultColumns,so
           {groups.map(g=>(
             <div key={g} className="mb-4">
               <p className="text-xs font-bold uppercase tracking-wider mb-1.5" style={{color:"#94A3B8"}}>{g}</p>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
                 {columnMeta.filter(c=>c.group===g).map(c=>{
                   const checked=selectedCols.includes(c.id);
                   const disabled=!checked&&atCap;
