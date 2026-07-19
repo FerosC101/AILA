@@ -1,0 +1,4 @@
+# Backend is deployed separately (Render/Railway/Fly) — not on Vercel.
+server
+# Committed node_modules bloats the upload; Vercel reinstalls from package.json.
+node_modules
