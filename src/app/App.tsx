@@ -2313,11 +2313,22 @@ type RagResult = { question:string; answer:string; summary?:string; verdict?:str
 function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBack: () => void; onSimulate: () => void; result?: RagResult|null }) {
   const r = SME_RICH_RESPONSE;
   const serif = "Georgia, 'Times New Roman', serif";
-  const frictionColor:Record<string,string>={Low:"#10B981",Medium:"#F59E0B",High:"#EF4444"};
-  const flagEmoji:Record<string,string>={SG:"🇸🇬",MY:"🇲🇾",TH:"🇹🇭",ID:"🇮🇩",VN:"🇻🇳",PH:"🇵🇭"};
-  const others = ASEAN_TRANSFER_RULES.filter(x=>x.key!=="ph");
-  const ph = ASEAN_TRANSFER_RULES.find(x=>x.key==="ph")!;
+  const frictionColor:Record<string,string>={Low:"#34D399",Medium:"#F59E0B",High:"#F87171"};
   const A = ARTICLE;
+
+  // Live regional comparison (derived from the DB via /transfer-rules).
+  const [regionRules,setRegionRules]=useState<TransferRule[]>([]);
+  useEffect(()=>{
+    const base=(import.meta as any).env?.VITE_AILA_API_BASE_URL?.trim();
+    if(!base) return;
+    fetch(`${base}/transfer-rules`).then(x=>x.json())
+      .then(d=>setRegionRules(Array.isArray(d?.rules)?d.rules:[])).catch(()=>{});
+  },[]);
+  // Pick the jurisdiction the answer is actually about (from the query + cited jurisdictions).
+  const hay=`${query} ${(result?.citations??[]).map(c=>c.jurisdiction).join(" ")}`.toLowerCase();
+  const focus=regionRules.find(rr=>hay.includes(rr.name.toLowerCase()))||null;
+  const otherRules=regionRules.filter(rr=>rr!==focus);
+  const provisions=result?.citations??[];   // real cited provisions for THIS answer
 
   return (
     <div className="aila-dark-page" style={{position:"absolute",inset:0,background:"#0B0F17",overflowY:"auto",zIndex:50,fontFamily:"Inter, sans-serif"}}>
@@ -2328,7 +2339,7 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
             <ChevronLeft size={16}/> Back to Assistant
           </button>
           <div style={{flex:1}}/>
-          <img src={ailaLogo} alt="AILA" style={{height:"20px",width:"auto",objectFit:"contain"}}/>
+          <img src={ailaLogo} alt="AILA" style={{height:"20px",width:"auto",objectFit:"contain",filter:"brightness(0) invert(1)"}}/>
         </div>
       </div>
 
@@ -2553,29 +2564,32 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
       </div>
       </>}
 
-      {/* ===== REGIONAL COMPARISON ===== */}
+      {/* ===== REGIONAL COMPARISON (live from /transfer-rules) ===== */}
+      {regionRules.length>0 && (
       <div style={{maxWidth:"940px",margin:"56px auto 0",padding:"0 28px"}}>
         <div style={{maxWidth:"706px",marginLeft:"auto"}}>
           <h2 style={{fontFamily:serif,fontSize:"21px",fontWeight:700,color:"#EEF1F7",margin:"0 0 6px"}}>How the Region Compares</h2>
-          <p style={{fontSize:"14px",color:"#9AA3B4",margin:"0 0 18px"}}>Cross-border transfer of sensitive data across ASEAN jurisdictions.</p>
-          <div style={{border:"1.5px solid rgba(29,78,216,0.3)",borderRadius:"12px",padding:"15px 17px",marginBottom:"12px",background:"rgba(30,58,95,0.04)"}}>
-            <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"7px"}}>
-              <span style={{fontSize:"19px"}}>🇵🇭</span>
-              <span style={{fontSize:"14px",fontWeight:700,color:"#EEF1F7"}}>{ph.name}</span>
-              <span style={{fontSize:"10px",fontWeight:700,color:"#60A5FA",background:"rgba(29,78,216,0.1)",padding:"2px 8px",borderRadius:"20px",letterSpacing:"0.05em"}}>YOUR JURISDICTION</span>
-              <div style={{flex:1}}/>
-              <span style={{fontSize:"11px",fontWeight:700,color:frictionColor[ph.friction]}}>{ph.friction} friction</span>
+          <p style={{fontSize:"14px",color:"#9AA3B4",margin:"0 0 18px"}}>Cross-border transfer of sensitive data across ASEAN jurisdictions — derived from the validated corpus.</p>
+          {focus && (
+            <div style={{border:"1.5px solid rgba(96,165,250,0.35)",borderRadius:"12px",padding:"15px 17px",marginBottom:"12px",background:"rgba(96,165,250,0.06)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"7px"}}>
+                <span style={{fontSize:"19px"}}>{focus.flag}</span>
+                <span style={{fontSize:"14px",fontWeight:700,color:"#EEF1F7"}}>{focus.name}</span>
+                <span style={{fontSize:"10px",fontWeight:700,color:"#60A5FA",background:"rgba(96,165,250,0.14)",padding:"2px 8px",borderRadius:"20px",letterSpacing:"0.05em"}}>IN FOCUS</span>
+                <div style={{flex:1}}/>
+                <span style={{fontSize:"11px",fontWeight:700,color:frictionColor[focus.friction]}}>{focus.friction} friction</span>
+              </div>
+              <p style={{fontSize:"13px",color:"#AEB6C6",margin:0,lineHeight:1.55}}>{focus.summary}</p>
             </div>
-            <p style={{fontSize:"13px",color:"#AEB6C6",margin:0,lineHeight:1.55}}>{ph.summary}</p>
-          </div>
+          )}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>
-            {others.map(c=>(
-              <div key={c.key} style={{border:"1px solid rgba(15,23,42,0.09)",borderRadius:"12px",padding:"14px",background:"#0B0F17"}}>
+            {otherRules.map(c=>(
+              <div key={c.key} style={{border:"1px solid rgba(255,255,255,0.09)",borderRadius:"12px",padding:"14px",background:"#0B0F17"}}>
                 <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"7px"}}>
-                  <span style={{fontSize:"16px"}}>{flagEmoji[c.flag]}</span>
+                  <span style={{fontSize:"16px"}}>{c.flag}</span>
                   <span style={{fontSize:"13px",fontWeight:700,color:"#EEF1F7"}}>{c.name}</span>
                   <div style={{flex:1}}/>
-                  <span style={{fontSize:"10px",fontWeight:700,color:frictionColor[c.friction],background:frictionColor[c.friction]+"14",padding:"2px 8px",borderRadius:"20px"}}>{c.friction}</span>
+                  <span style={{fontSize:"10px",fontWeight:700,color:frictionColor[c.friction],background:frictionColor[c.friction]+"22",padding:"2px 8px",borderRadius:"20px"}}>{c.friction}</span>
                 </div>
                 <p style={{fontSize:"12px",color:"#9AA3B4",margin:0,lineHeight:1.55}}>{c.summary}</p>
               </div>
@@ -2583,6 +2597,7 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
           </div>
         </div>
       </div>
+      )}
 
       {/* ===== TAGS + ACTIONS ===== */}
       <div style={{maxWidth:"940px",margin:"48px auto 0",padding:"0 28px"}}>
@@ -2598,30 +2613,40 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
         </div>
       </div>
 
-      {/* ===== CITED PROVISIONS (notes) ===== */}
+      {/* ===== CITED PROVISIONS (real, from result.citations) ===== */}
+      {provisions.length>0 && (
       <div style={{background:"#0C1119",marginTop:"56px",borderTop:"1px solid rgba(255,255,255,0.07)"}}>
         <div style={{maxWidth:"820px",margin:"0 auto",padding:"44px 28px 52px"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"10px",marginBottom:"32px"}}>
             <h2 style={{fontFamily:serif,fontSize:"22px",fontWeight:700,color:"#EEF1F7",margin:0}}>Cited Provisions</h2>
-            <span style={{fontSize:"12px",fontWeight:700,color:"#fff",background:"#2563EB",borderRadius:"50%",width:"22px",height:"22px",display:"flex",alignItems:"center",justifyContent:"center"}}>{CITED_PROVISIONS.length}</span>
+            <span style={{fontSize:"12px",fontWeight:700,color:"#fff",background:"#2563EB",borderRadius:"50%",width:"22px",height:"22px",display:"flex",alignItems:"center",justifyContent:"center"}}>{provisions.length}</span>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:"20px"}}>
-            {CITED_PROVISIONS.map((c,i)=>(
-              <div key={i} style={{display:"flex",gap:"14px"}}>
-                <div style={{width:"38px",height:"38px",borderRadius:"50%",background:"#0B0F17",border:"1px solid rgba(15,23,42,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px",flexShrink:0}}>{c.flag}</div>
-                <div style={{flex:1}}>
-                  <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"5px"}}>
-                    <span style={{fontSize:"12px",fontWeight:700,letterSpacing:"0.04em",textTransform:"uppercase",color:"#EEF1F7"}}>{c.src}</span>
-                    <span style={{fontSize:"11px",color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{c.date}</span>
+            {provisions.map((c)=>{
+              let host=""; try{ host=new URL(c.url).hostname; }catch{}
+              return (
+                <div key={c.n} style={{display:"flex",gap:"14px"}}>
+                  <div style={{width:"38px",height:"38px",borderRadius:"50%",background:"#0B0F17",border:"1px solid rgba(255,255,255,0.1)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden"}}>
+                    {host
+                      ? <img src={`https://www.google.com/s2/favicons?domain=${host}&sz=64`} alt="" width={20} height={20} style={{objectFit:"contain"}} onError={e=>{(e.currentTarget as HTMLImageElement).style.display="none";}}/>
+                      : <span style={{fontSize:"11px",fontWeight:700,color:"#60A5FA"}}>{c.n}</span>}
                   </div>
-                  <p style={{fontSize:"14px",lineHeight:1.65,color:"#AEB6C6",margin:"0 0 6px",fontFamily:serif}}>{c.note}</p>
-                  <span style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"#60A5FA",cursor:"default"}}>View Source</span>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"5px"}}>
+                      <span style={{fontSize:"12px",fontWeight:700,letterSpacing:"0.04em",textTransform:"uppercase",color:"#EEF1F7"}}>{c.instrument}</span>
+                      <span style={{fontSize:"11px",color:"#94A3B8",fontFamily:"JetBrains Mono, monospace"}}>{c.jurisdiction}</span>
+                      {c.live&&<span style={{fontSize:"9px",fontWeight:700,color:"#34D399",background:"rgba(52,211,153,0.14)",padding:"1px 6px",borderRadius:"10px"}}>LIVE</span>}
+                    </div>
+                    <p style={{fontSize:"14px",lineHeight:1.65,color:"#AEB6C6",margin:"0 0 6px",fontFamily:serif}}>{c.snippet}</p>
+                    <a href={c.url} target="_blank" rel="noreferrer" style={{fontSize:"10px",fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"#60A5FA",textDecoration:"none"}}>View Source ↗</a>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
+      )}
 
       {/* ===== RELATED ANALYSIS (dark) — real cited sources for this answer ===== */}
       {(() => {
@@ -2638,10 +2663,14 @@ function AnswerPage({ query, onBack, onSimulate, result }: { query: string; onBa
                   const g = GRAD[i % 3];
                   return (
                     <a key={i} href={c.url} target="_blank" rel="noreferrer" style={{display:"block",textDecoration:"none",borderRadius:"8px",overflow:"hidden",background:"#0B0F17"}}>
-                      <div style={{height:"130px",background:"linear-gradient(135deg,"+g[0]+","+g[1]+")",display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+                      <div style={{height:"130px",background:"linear-gradient(135deg,"+g[0]+","+g[1]+")",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
                         <FileText size={34} style={{color:"rgba(15,23,42,0.18)"}}/>
-                        <span style={{position:"absolute",top:"12px",left:"12px",fontSize:"10px",fontWeight:700,letterSpacing:"0.05em",textTransform:"uppercase",color:"#fff",background:c.live?"#047857":g[2],padding:"4px 9px",borderRadius:"4px"}}>{c.live?"Live Source":c.jurisdiction}</span>
-                        <span style={{position:"absolute",top:"12px",right:"12px",fontSize:"10px",fontWeight:700,color:"#C4CCD9",background:"rgba(255,255,255,0.12)",padding:"3px 7px",borderRadius:"4px",fontFamily:"JetBrains Mono, monospace"}}>[{c.n}]</span>
+                        {/* Real preview image of the actual cited source page; falls back to the gradient on error */}
+                        <img src={`https://image.thum.io/get/width/600/crop/360/${c.url}`} alt="" loading="lazy"
+                          style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}
+                          onError={e=>{(e.currentTarget as HTMLImageElement).style.display="none";}}/>
+                        <span style={{position:"absolute",top:"12px",left:"12px",zIndex:2,fontSize:"10px",fontWeight:700,letterSpacing:"0.05em",textTransform:"uppercase",color:"#fff",background:c.live?"#047857":g[2],padding:"4px 9px",borderRadius:"4px"}}>{c.live?"Live Source":c.jurisdiction}</span>
+                        <span style={{position:"absolute",top:"12px",right:"12px",zIndex:2,fontSize:"10px",fontWeight:700,color:"#fff",background:"rgba(0,0,0,0.5)",padding:"3px 7px",borderRadius:"4px",fontFamily:"JetBrains Mono, monospace"}}>[{c.n}]</span>
                       </div>
                       <div style={{padding:"16px 18px 18px"}}>
                         <h3 style={{fontFamily:serif,fontSize:"16px",fontWeight:700,color:"#EEF1F7",margin:"0 0 8px",lineHeight:1.4}}>{c.instrument}</h3>
