@@ -1,0 +1,23 @@
+# Render blueprint for the AILA backend (Docker).
+# In Render: New → Blueprint → pick this repo. Then set the two secret env vars
+# in the dashboard (they are marked sync:false so they are NOT stored in git).
+services:
+  - type: web
+    name: aila-backend
+    runtime: docker
+    repo: https://github.com/FerosC101/AILA
+    branch: main
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false          # set in the Render dashboard
+      - key: TAVILY_API_KEY
+        sync: false          # optional — live web search
+      - key: USE_PLAYWRIGHT
+        value: "0"
+      # GEMINI_MODEL intentionally unset — each module picks its own default
+      # (classify→2.0-flash, extract/rag→2.5-flash). Set it only to override all.
