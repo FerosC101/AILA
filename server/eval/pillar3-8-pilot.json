@@ -1,0 +1,84 @@
+[
+  {
+    "dbRow": "pilot-P3I1",
+    "economy": "Malaysia",
+    "lawName": "Legal Profession (Amendment) Act 2012",
+    "indicators": ["P3-I1"],
+    "pillar": "Foreign Direct Investment",
+    "context": "Pillar 3 pilot — foreign equity limits: Qualified Foreign Law Firm scheme caps foreign equity/voting rights at 40% in International Partnerships",
+    "seedUrl": "https://www.malaysianbar.org.my/article/members/become-a-member/foreign-lawyer-lawfirm/liberalisation/liberalisation-of-legal-services"
+  },
+  {
+    "dbRow": "pilot-P3I2",
+    "economy": "Malaysia",
+    "lawName": "Petroleum Development Act 1974",
+    "lawNumber": "Act 144",
+    "indicators": ["P3-I2"],
+    "pillar": "Foreign Direct Investment",
+    "context": "Pillar 3 pilot — joint venture requirement: upstream petroleum operations must be conducted via Production Sharing Contract/Joint Operating Agreement with PETRONAS",
+    "seedUrl": "https://bhess.jpm.gov.my/wp-content/uploads/2024/08/Petroleum-Development-Act-1974-Act-144.pdf"
+  },
+  {
+    "dbRow": "pilot-P3I3",
+    "economy": "Singapore",
+    "lawName": "Companies Act 1967",
+    "indicators": ["P3-I3"],
+    "pillar": "Foreign Direct Investment",
+    "context": "Pillar 3 pilot — nationality/residency requirement: at least one director ordinarily resident in Singapore",
+    "seedUrl": "https://sso.agc.gov.sg/Act/CoA1967"
+  },
+  {
+    "dbRow": "pilot-P3I4",
+    "economy": "Australia",
+    "lawName": "Foreign Acquisitions and Takeovers Act 1975",
+    "indicators": ["P3-I4"],
+    "pillar": "Foreign Direct Investment",
+    "context": "Pillar 3 pilot — investment screening: FIRB mandatory notification/approval regime for foreign acquisitions above thresholds",
+    "seedUrl": "https://www.legislation.gov.au/C2004A01402/latest/text"
+  },
+  {
+    "dbRow": "pilot-P3I5",
+    "economy": "Malaysia",
+    "lawName": "Financial Services Act 2013",
+    "indicators": ["P3-I5"],
+    "pillar": "Foreign Direct Investment",
+    "context": "Pillar 3 pilot — commercial presence requirement: foreign insurers must operate via a locally incorporated subsidiary",
+    "seedUrl": "https://www.investmalaysia.gov.my/media/xrnl0vfp/financial-services-act-2013.pdf"
+  },
+  {
+    "dbRow": "pilot-P8I1",
+    "economy": "Singapore",
+    "lawName": "Copyright Act 2021",
+    "indicators": ["P8-I1"],
+    "pillar": "Internet Intermediary Liability",
+    "context": "Pillar 8 pilot — safe harbour for copyright infringement: Part 9 network service provider limitation-of-remedies regime",
+    "seedUrl": "https://sso.agc.gov.sg/Act/CA2021"
+  },
+  {
+    "dbRow": "pilot-P8I2",
+    "economy": "Singapore",
+    "lawName": "Electronic Transactions Act 2010",
+    "indicators": ["P8-I2"],
+    "pillar": "Internet Intermediary Liability",
+    "context": "Pillar 8 pilot — safe harbour for other (non-copyright) illegal activities: s.10 general network service provider liability limitation for third-party material",
+    "seedUrl": "https://sso.agc.gov.sg/Act/ETA2010"
+  },
+  {
+    "dbRow": "pilot-P8I3",
+    "economy": "Malaysia",
+    "lawName": "Communications and Multimedia Act 1998 — Mandatory Standard on Registration of Prepaid SIM End Users",
+    "indicators": ["P8-I3"],
+    "pillar": "Internet Intermediary Liability",
+    "context": "Pillar 8 pilot — user identity requirement: mandatory prepaid SIM card registration with biometric/document identity verification, issued under ss.55 and 104(1)(b) CMA 1998",
+    "seedUrl": "https://www.mcmc.gov.my/en/faqs/prepaid-registration/what-type-of-documents-can-be-used-for-the-registr"
+  },
+  {
+    "dbRow": "pilot-P8I4",
+    "economy": "Australia",
+    "lawName": "Online Safety Act 2021",
+    "indicators": ["P8-I4"],
+    "pillar": "Internet Intermediary Liability",
+    "context": "Pillar 8 pilot — monitoring requirements: Basic Online Safety Expectations determination for platform providers",
+    "seedUrl": "https://www.legislation.gov.au/Series/C2021A00076"
+  }
+]

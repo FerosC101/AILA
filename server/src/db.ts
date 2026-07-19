@@ -205,6 +205,10 @@ export async function initDb(): Promise<void> {
   // (Act | Regulation | Amendment | ...); now filled via clauses cross-reference
   // in validate.ts (extract.ts already captures it per clause for the same law).
   try { await db.execute("ALTER TABLE validations ADD COLUMN level TEXT"); } catch { /* already exists */ }
+  // migration: criterionMatch — the Group-B criteriaTable.ts tier the model selected
+  // for the provision's indicator (1-based), or NULL for Group A/unscored indicators.
+  // Stored as-is; not yet converted into a score (that wiring is a separate phase).
+  try { await db.execute("ALTER TABLE validations ADD COLUMN criterion_match INTEGER"); } catch { /* already exists */ }
 }
 
 // ── Versions (semantic version control) ────────────────────────────────────────
@@ -327,6 +331,7 @@ export interface ValidationRow {
   coverage?: string;         // sectoral/subject-matter scope (e.g. "Cross-cutting", "Telecommunications services")
   timeframe?: string;        // temporal scope (e.g. "Since 2023", "Since 1988, last amended 2024")
   impactComments?: string;   // ESCAP "Impact or Comments on Acts or Practices" field
+  criterionMatch?: number | null; // Group-B criteriaTable.ts tier the model selected (1-based); null = Group A/unscored indicator or evidence didn't clearly support one tier. Stored as-is — NOT yet converted into a score (Phase 2).
 }
 
 /** Replace all validation rows for a seed DB row (idempotent re-validation), or append if no dbRow. */
@@ -338,8 +343,8 @@ export async function saveValidations(rows: ValidationRow[], replaceDbRow?: stri
       sql: `INSERT INTO validations
         (id, db_row, economy, law_name, law_number, last_amended, indicator_id, article_section,
          discovery_tag, verbatim, mapping_rationale, source_url, confidence, notes, seed_json,
-         coverage, timeframe, impact_comments, level)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?)`,
+         coverage, timeframe, impact_comments, level, criterion_match)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?)`,
       args: [
         `val-${randomUUID().slice(0, 8)}`, r.dbRow ?? null, r.economy, r.lawName ?? null, r.lawNumber ?? null,
         r.lastAmended ?? null, r.indicatorId ?? null, r.articleSection ?? null, r.discoveryTag ?? null,
@@ -347,6 +352,7 @@ export async function saveValidations(rows: ValidationRow[], replaceDbRow?: stri
         typeof r.confidence === "number" ? r.confidence : null, r.notes ?? null,
         r.seed ? JSON.stringify(r.seed) : null,
         r.coverage ?? null, r.timeframe ?? null, r.impactComments ?? null, r.level ?? null,
+        typeof r.criterionMatch === "number" ? r.criterionMatch : null,
       ],
     });
   }
@@ -365,6 +371,7 @@ function hydrateValidation(row: any): ValidationRow {
     notes: row.notes ?? undefined, seed: row.seed_json ? JSON.parse(row.seed_json) : undefined,
     coverage: row.coverage ?? undefined, timeframe: row.timeframe ?? undefined,
     impactComments: row.impact_comments ?? undefined,
+    criterionMatch: row.criterion_match ?? undefined,
   };
 }
 

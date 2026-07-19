@@ -2756,7 +2756,7 @@ function SMEAssistant({ onAsk, conversationId, setConversationId, seedQuestion, 
       setMsgs(m=>[...m,{role:"ai",result,article:{id:result!.articleId||"",question:q,summary:result!.summary||result!.answer||"",verdict:result!.verdict,confidence:result!.confidence,sourcesAdded:result!.sourcesAdded}}]);
       fetch(`${base}/conversations`).then(r=>r.json()).then(d=>setRecent(Array.isArray(d)?d:[])).catch(()=>{}); // refresh resume list
     }else{
-      setMsgs(m=>[...m,{role:"ai",text:"I couldn't reach the research backend. Please try again."}]);
+      setMsgs(m=>[...m,{role:"ai",text:"I can't reach your request. Please try again."}]);
     }
   };
 
@@ -2794,8 +2794,8 @@ function SMEAssistant({ onAsk, conversationId, setConversationId, seedQuestion, 
       const r=await fetch(`${base}/upload`,{method:"POST",body:fd});
       const d=await r.json();
       const n=d?.clauses?.length ?? d?.pipeline?.extraction?.clauseCount ?? 0;
-      setMsgs(m=>[...m,{role:"ai",text:r.ok?`Indexed “${f.name}” — ${n} clause${n===1?"":"s"} extracted. It's now part of the corpus and I can cite it in answers.`:`Couldn't process “${f.name}”: ${d?.error||"upload failed"}.`}]);
-    }catch{ setMsgs(m=>[...m,{role:"ai",text:`Couldn't upload “${f.name}”.`}]); }
+      setMsgs(m=>[...m,{role:"ai",text:r.ok?`Indexed "${f.name}" — ${n} clause${n===1?"":"s"} extracted. It's now part of the corpus and I can cite it in answers.`:"I can't reach your request. Please try again."}]);
+    }catch{ setMsgs(m=>[...m,{role:"ai",text:"I can't reach your request. Please try again."}]); }
     setUploading(false);
   };
 

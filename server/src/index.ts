@@ -629,7 +629,8 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     const result = await processUpload(f.buffer, f.originalname, f.mimetype, jurisdiction);
     res.json(result);
   } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    console.error(`[upload] "${f.originalname}" failed:`, err instanceof Error ? err.stack ?? err.message : err);
+    res.status(502).json({ error: "upload_failed" });
   }
 });
 

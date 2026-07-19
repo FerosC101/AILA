@@ -1,0 +1,51 @@
+[
+  {
+    "dbRow": "pilot-P7I1",
+    "economy": "Malaysia",
+    "lawName": "Personal Data Protection Act 2010",
+    "lawNumber": "Act 709",
+    "indicators": ["P7-I1"],
+    "pillar": "Domestic Data Protection & Privacy",
+    "context": "Pillar 7 pilot — comprehensive data protection framework",
+    "seedUrl": "https://www.pdp.gov.my/ppdpv1/en/akta/pdp-act-2010-en"
+  },
+  {
+    "dbRow": "pilot-P7I2",
+    "economy": "Australia",
+    "lawName": "Security of Critical Infrastructure Act 2018",
+    "lawNumber": "Act No. 29, 2018",
+    "indicators": ["P7-I2"],
+    "pillar": "Domestic Data Protection & Privacy",
+    "context": "Pillar 7 pilot — dedicated cybersecurity framework",
+    "seedUrl": "https://www.legislation.gov.au/Series/C2018A00029"
+  },
+  {
+    "dbRow": "pilot-P7I3",
+    "economy": "Australia",
+    "lawName": "Telecommunications (Interception and Access) Act 1979",
+    "lawNumber": "No. 114, 1979",
+    "indicators": ["P7-I3"],
+    "pillar": "Domestic Data Protection & Privacy",
+    "context": "Pillar 7 pilot — minimum data retention period requirement",
+    "seedUrl": "https://www.legislation.gov.au/C2004A02124/latest/text"
+  },
+  {
+    "dbRow": "pilot-P7I4",
+    "economy": "Singapore",
+    "lawName": "Personal Data Protection Act 2012",
+    "indicators": ["P7-I4"],
+    "pillar": "Domestic Data Protection & Privacy",
+    "context": "Pillar 7 pilot — DPIA/DPO requirement",
+    "seedUrl": "https://sso.agc.gov.sg/Act/PDPA2012"
+  },
+  {
+    "dbRow": "pilot-P7I5",
+    "economy": "Australia",
+    "lawName": "Australian Security Intelligence Organisation Act 1979",
+    "lawNumber": "No. 113, 1979",
+    "indicators": ["P7-I5"],
+    "pillar": "Domestic Data Protection & Privacy",
+    "context": "Pillar 7 pilot — government access to personal data without court order",
+    "seedUrl": "https://www.legislation.gov.au/C2004A02143/latest"
+  }
+]

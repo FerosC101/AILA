@@ -1,4 +1,11 @@
-
+// AILA v5 — provision validation engine. For a seed Round-1 database row it:
+//   discover official source (live) → fetch (ORIGINAL LANGUAGE, structure-preserving) →
+//   extract exact provisions from the ORIGINAL text → ground each verbatim claim against
+//   that same text → translate only for display → classify VERIFIED / UPDATED / NEW / INVALID →
+//   map to RDTII indicators → persist.
+// See docs/AILA-v5-methodology.md. This is the "validate-and-discover" pipeline,
+// distinct from the document-atom clause extraction in extract.ts.
+//
 // FIX LOG (this revision) — closes the four verbatim-integrity gaps identified in review:
 //   1. Translation no longer happens before extraction. Gemini sees the ORIGINAL-language
 //      source text and is told to quote from it verbatim in the original language; English
@@ -20,7 +27,13 @@
 //      match quality / OCR / citation-completeness / truncation — never from Gemini's own
 //      self-reported confidence number. The original 0–1 `confidence` field is kept as a
 //      dual column, but is now DERIVED from the label (not the reverse).
-
+//
+// ⚠ SCHEMA DEPENDENCY: this file now sets two fields — `verbatimEn` (fix #1) and
+// `confidenceLabel` (fix #5) — on the `ValidationRow` object returned to db.ts's
+// saveValidations(). ValidationRow is defined in ./db.ts (not shown here); if it's a
+// strict/closed TS interface, add these two fields there or this file won't compile:
+//   verbatimEn?: string;
+//   confidenceLabel?: "High" | "Medium" | "Low";
 
 import * as cheerio from "cheerio";
 import { fetchText, fetchPdfText, fetchWaybackSnapshot, BROWSER_HEADERS } from "./scraper.js";
@@ -29,6 +42,7 @@ import { ensureEnglish } from "./translate.js"; // non-destructive: returns a tr
 import { searchWeb } from "./websearch.js";
 import { classifyAuthority } from "./authority.js";
 import { RDTII_INDICATORS, isIndicatorId, findIndicator } from "./indicators.js";
+import { findCriteria } from "./criteriaTable.js";
 import { recordGeminiUsage } from "./cost.js";
 import { saveValidations, crossRefClauseFields, type ValidationRow, type DiscoveryTag } from "./db.js";
 
@@ -329,6 +343,26 @@ async function discoverSources(seed: SeedRow): Promise<string[]> {
 
 // ── Gemini extraction (operates on ORIGINAL-language chunked text) ─────────
 
+/**
+ * For each of the seed's target indicators that has a Group-B criteriaTable.ts entry,
+ * render its numbered tiers verbatim so the model can select criterionMatch instead of
+ * only describing the scoring direction in free-text mappingRationale. Indicators with
+ * no criteria table (Group A / unscored — findCriteria() returns undefined, or an entry
+ * with no `tiers`, e.g. P12-I4's subCriteria shape) are skipped, never fabricated.
+ */
+function buildCriteriaBlock(indicatorIds: string[] | undefined): string {
+  if (!indicatorIds?.length) return "";
+  const blocks = indicatorIds
+    .map((id) => {
+      const c = findCriteria(id);
+      if (!c?.tiers?.length) return null;
+      const lines = c.tiers.map((t) => `  ${t.tier}) ${t.description}`).join("\n");
+      return `Indicator ${id} scoring criteria — choose the ONE option that matches the evidence:\n${lines}`;
+    })
+    .filter((b): b is string => !!b);
+  return blocks.join("\n\n");
+}
+
 async function callGemini(seed: SeedRow, allChunks: SourceChunk[]): Promise<any[]> {
   const key = process.env.GEMINI_API_KEY!;
   const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -342,6 +376,8 @@ async function callGemini(seed: SeedRow, allChunks: SourceChunk[]): Promise<any[
 - Indicator(s) to test: ${(seed.indicators ?? []).join(", ") || "—"}
 - Pillar/topic: ${seed.pillar ?? "—"}
 - Context/notes: ${seed.context ?? "—"}`;
+
+  const criteriaBlock = buildCriteriaBlock(seed.indicators);
 
   // Sources are labeled by URL AND chunk, e.g. [S1.1], [S1.2], [S2.1] — the model must
   // cite exactly which chunk a quote came from so the grounding check can verify it fast.
@@ -380,6 +416,11 @@ For each relevant provision return an object:
 - "indicatorId": ONE RDTII id (P#-I#) from the catalog it maps to
 - "articleSection": exact citation (e.g. "s. 129(2)", "APP 8, cl. 8.1")
 - "discoveryTag": one of ${JSON.stringify(TAGS)} (classify vs the seed)
+- "criterionMatch": if a numbered scoring-criteria list was given above for this
+  provision's indicatorId, the INTEGER tier number (e.g. 1, 2, 3) that best matches
+  the evidence; null if that indicator has no criteria list above (Group A / unscored)
+  or the evidence doesn't clearly support any single tier. See the mandatory-when-
+  VERIFIED/UPDATED rule above — do not leave this null merely because it's easier.
 - "verbatim": EXACT original-language statutory text (<=500 chars, will be trimmed to a
   clause boundary downstream); "" if not officially retrieved
 - "sourceChunk": which source chunk label (e.g. "S1.2") the verbatim text came from, or null
@@ -402,7 +443,7 @@ ${INDICATOR_CATALOG}
 
 ${seedBlock}
 
-OFFICIAL SOURCES (original language, chunked; cite the exact [Sx.y] label you quote from):
+${criteriaBlock ? `${criteriaBlock}\n\n` : ""}OFFICIAL SOURCES (original language, chunked; cite the exact [Sx.y] label you quote from):
 ${srcBlock || "(no source text retrieved)"}
 
 Return ONLY JSON: {"provisions":[ ... ]}`;
@@ -416,6 +457,52 @@ Return ONLY JSON: {"provisions":[ ... ]}`;
   recordGeminiUsage(model, data);
   try { return JSON.parse(data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}").provisions ?? []; }
   catch { return []; }
+}
+
+// ── VERIFIED/UPDATED evidence-guard helpers (see guards in validateSeedRow) ────
+
+// Known placeholder/degenerate articleSection values seen in practice — not real
+// citations, just the model punting when it couldn't locate a specific provision.
+// "general" was added after the Pillar 7 re-test: the model returned it twice in a
+// row for the ASIO Act/P7-I5 case where the original pilot saw the bare law name
+// repeated instead — same underlying failure (no specific provision located),
+// different placeholder text. Extend this set as further variants surface.
+const DEGENERATE_ARTICLE_SECTION_STRINGS = new Set(["whole act", "long title", "preamble", "n/a", "unknown", "general"]);
+
+/**
+ * True if `articleSection` isn't a real, specific citation: blank/whitespace-only,
+ * a known placeholder string ("Whole Act", "Long title", ...), or just the law's
+ * own name repeated back (matched against whatever law-name candidates are passed —
+ * typically p.lawName and seed.lawName) rather than an actual section/article.
+ */
+function isDegenerateArticleSection(articleSection: unknown, ...lawNames: (string | undefined)[]): boolean {
+  if (typeof articleSection !== "string") return true;
+  const trimmed = articleSection.trim();
+  if (!trimmed) return true;
+  const normalized = trimmed.toLowerCase();
+  if (DEGENERATE_ARTICLE_SECTION_STRINGS.has(normalized)) return true;
+  return lawNames.some((name) => name && normalized === name.trim().toLowerCase());
+}
+
+// Fix 3: lightweight tier-vs-rationale coherence check — a single conservative word
+// pair (restrictive: "sectoral"/"limited"/"non-dedicated" vs broad: "comprehensive"/
+// "cross-sectoral"/"applies broadly"/"horizontal") matching the actual conflict class
+// observed in the Pillar 7 pilot. Checked BIDIRECTIONALLY: the pilot's real case was
+// tier 3 "Comprehensive data protection framework" (broad) selected while the model's
+// own mappingRationale argued "sectoral/limited nature" (restrictive) — i.e. broad
+// tier + restrictive rationale, not the other way round. Both directions are real
+// possible mismatches, so both are checked. Deliberately narrow: false positives here
+// are more costly than missed cases, since this only ever flags for human review — it
+// never auto-corrects.
+const RESTRICTIVE_WORDS = /\b(sectoral|sector-specific|non-dedicated|limited)\b/i;
+const BROAD_WORDS = /\b(comprehensive|cross-sectoral|applies broadly|not sector-limited|horizontal(?:ly)?)\b/i;
+
+function tierRationaleConflict(tierDescription: string, mappingRationale: string): boolean {
+  const tierBroad = BROAD_WORDS.test(tierDescription);
+  const tierRestrictive = RESTRICTIVE_WORDS.test(tierDescription);
+  const rationaleBroad = BROAD_WORDS.test(mappingRationale);
+  const rationaleRestrictive = RESTRICTIVE_WORDS.test(mappingRationale);
+  return (tierBroad && rationaleRestrictive) || (tierRestrictive && rationaleBroad);
 }
 
 // ── main entry point ─────────────────────────────────────────────────────
@@ -443,6 +530,7 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
       lastAmended: seed.lastAmended || undefined,
       coverage: seed.coverage || seed.context || undefined,
       timeframe: seed.timeframe || undefined,
+      criterionMatch: null, // no evidence was ever retrieved — never a guess
     }));
   } else {
     const provisions = await callGemini(seed, allChunks);
@@ -522,6 +610,59 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
             notes = `Could not confirm the exact provision from an official source this session — flagged for manual verification. ${notes ?? ""}`.trim();
           }
 
+          // Guard: VERIFIED/UPDATED are strong claims — require actual grounding evidence,
+          // not just existence belief. Downgrade to NEW with a Notes flag unless there's
+          // non-empty verbatim OR a real, specific articleSection. Deliberately does NOT
+          // consult the model's own self-reported p.confidence as an escape hatch — that's
+          // exactly the "AI judgment" signal computeConfidenceLabel() elsewhere in this file
+          // refuses to trust for raising confidence, and the Pillar 7 pilot showed it letting
+          // a zero-evidence row (SOCI Act, P7-I2) through with a confidently-scored rawScore.
+          let wasDowngraded = false;
+          if (
+            (tag === "VERIFIED" || tag === "UPDATED") &&
+            !verbatim &&
+            isDegenerateArticleSection(p.articleSection, p.lawName, seed.lawName)
+          ) {
+            const downgradedFrom = tag;
+            tag = "NEW";
+            wasDowngraded = true;
+            notes = `Existence-only match — no specific provision or verbatim text located this session; downgraded from ${downgradedFrom} pending manual verification. ${notes ?? ""}`.trim();
+          }
+
+          // criterionMatch: the Group-B tier the model selected. Never trust it blindly —
+          // force null for Group A/unscored indicators (no criteria list was ever shown to
+          // the model for these), discard any tier number that doesn't actually exist in
+          // that indicator's criteria table (nonsensical — same defensive posture as
+          // groundVerbatim), and separately withhold it when the VERIFIED/UPDATED guard
+          // above just downgraded this row for lack of evidence (unsupported — a real tier
+          // number with nothing behind it). Different failure modes, different notes text,
+          // so a reviewer can tell which happened.
+          const criteria = indicatorId ? findCriteria(indicatorId) : undefined;
+          let criterionMatch: number | null =
+            typeof p.criterionMatch === "number" && Number.isInteger(p.criterionMatch) ? p.criterionMatch : null;
+          if (!criteria?.tiers?.length) {
+            criterionMatch = null;
+          } else if (criterionMatch != null && !criteria.tiers.some((t) => t.tier === criterionMatch)) {
+            notes = `${notes ?? ""} (criterionMatch ${criterionMatch} is not a valid tier for ${indicatorId} — discarded.)`.trim();
+            criterionMatch = null;
+          }
+          if (wasDowngraded && criterionMatch != null) {
+            criterionMatch = null;
+            notes = `${notes ?? ""} criterionMatch also withheld — insufficient evidence to support a specific tier.`.trim();
+          }
+
+          // Fix 3: tier-vs-rationale coherence check — flag only, never auto-correct or
+          // downgrade. A soft text-matching signal (see tierRationaleConflict's own note on
+          // false-positive risk), so it only ever appends a manual-review note; it must not
+          // touch criterionMatch or discoveryTag by itself.
+          if (criterionMatch != null && criteria?.tiers?.length) {
+            const tierDescription = criteria.tiers.find((t) => t.tier === criterionMatch)?.description ?? "";
+            const rationale = typeof p.mappingRationale === "string" ? p.mappingRationale : "";
+            if (tierRationaleConflict(tierDescription, rationale)) {
+              notes = `${notes ?? ""} criterionMatch tier ${criterionMatch} may conflict with the stated mappingRationale — flagged for manual review, not auto-corrected.`.trim();
+            }
+          }
+
           return {
             dbRow, economy: seed.economy,
             lawName: typeof p.lawName === "string" && p.lawName ? p.lawName : seed.lawName,
@@ -538,6 +679,7 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
             coverage: typeof p.coverage === "string" && p.coverage ? p.coverage : (seed.context || undefined),
             timeframe: typeof p.timeframe === "string" && p.timeframe ? p.timeframe : undefined,
             impactComments: typeof p.impactComments === "string" && p.impactComments ? p.impactComments : undefined,
+            criterionMatch,
           } as ValidationRowPlus;
         })
     );
@@ -546,7 +688,7 @@ export async function validateSeedRow(seed: SeedRow, opts: { persist?: boolean }
         indicatorId: seed.indicators?.[0], discoveryTag: undefined, verbatim: "", confidence: 0.25,
         confidenceLabel: "Low" as ConfidenceLabel,
         notes: "Sources retrieved but no provision could be validated for the seed indicator(s). Needs manual review.", seed,
-        coverage: seed.context || undefined }];
+        coverage: seed.context || undefined, criterionMatch: null }];
     }
   }
 

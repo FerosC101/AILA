@@ -4,7 +4,7 @@
 
 import { loadClauses, loadValidations, REVIEW_THRESHOLD, type StoredClause, type ValidationRow } from "./db.js";
 import { findIndicator, findPillarIdByName, pillarName } from "./indicators.js";
-import { computeGroupAScore } from "./rawScore.js";
+import { computeGroupAScore, computeGroupBScore } from "./rawScore.js";
 
 /** RFC-4180 field escaping: quote when the value contains a comma, quote, or newline. */
 function esc(v: unknown): string {
@@ -76,7 +76,16 @@ const COLUMN_REGISTRY: ColumnDef[] = [
     id: "rawScore", label: "RawScore", group: "Context / Research Scope",
     getValue: (r) => {
       const ids = isValidationRow(r) ? (r.indicatorId ? [r.indicatorId] : []) : r.indicators ?? [];
-      const scores = ids.map((id) => computeGroupAScore(isValidationRow(r) ? r.economy : r.jurisdiction, id));
+      const economy = isValidationRow(r) ? r.economy : r.jurisdiction;
+      // criterionMatch only ever exists on ValidationRow (populated by validate.ts's
+      // Gemini pipeline) — StoredClause rows have no such field, so Group B correctly
+      // falls through to NOT FOUND for them rather than fabricating a match.
+      const criterionMatch = isValidationRow(r) ? r.criterionMatch : undefined;
+      const scores = ids.map((id) => {
+        const groupA = computeGroupAScore(economy, id);
+        // Group A stays authoritative where it applies — Group B only fills the gap.
+        return groupA !== "NOT FOUND" ? groupA : computeGroupBScore(id, criterionMatch);
+      });
       if (!scores.length) return "";
       if (scores.every((s) => s === "NOT FOUND")) return "Not yet extracted";
       return scores.map((s) => (s === "NOT FOUND" ? "?" : s)).join("; ");
