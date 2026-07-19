@@ -54,6 +54,7 @@ export interface SeedRow {
   pillar?: string;
   context?: string;
   seedUrl?: string;
+  officialOnly?: boolean;   // when true + seedUrl set, extract ONLY from that official source (no web-search mirrors)
 }
 
 export function validatorEnabled(): boolean {
@@ -120,6 +121,9 @@ async function sourceText(url: string, economy: string): Promise<FetchedSource> 
 
 /** Discover official candidate URLs for a seed row (seed URL first, then authority-ranked search). */
 async function discoverSources(seed: SeedRow): Promise<string[]> {
+  // Official-only mode: trust the supplied official source exclusively — no web-search
+  // mirrors can win attribution, so every provision cites the official URL.
+  if (seed.officialOnly && seed.seedUrl) return [seed.seedUrl];
   const focus = (seed.indicators ?? []).map((id) => findIndicator(id)?.focus).filter(Boolean).join(" ");
   const query = [seed.economy, seed.lawName, seed.lawNumber, focus || seed.context, "official legislation act section"]
     .filter(Boolean).join(" ");
