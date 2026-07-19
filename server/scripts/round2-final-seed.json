@@ -1,0 +1,42 @@
+[
+  {
+    "economy": "India",
+    "lawName": "Digital Personal Data Protection Act, 2023",
+    "lawNumber": "Act No. 22 of 2023",
+    "pillar": "Cross-border data policies",
+    "context": "transfer of personal data outside the territory of India; restriction of transfer to notified countries",
+    "seedUrl": "https://www.meity.gov.in/writereaddata/files/Digital%20Personal%20Data%20Protection%20Act%202023.pdf"
+  },
+  {
+    "economy": "India",
+    "lawName": "Digital Personal Data Protection Act, 2023",
+    "lawNumber": "Act No. 22 of 2023",
+    "pillar": "Domestic data protection & privacy",
+    "context": "obligations of the data fiduciary and rights of the data principal; consent for processing of personal data",
+    "seedUrl": "https://www.meity.gov.in/writereaddata/files/Digital%20Personal%20Data%20Protection%20Act%202023.pdf"
+  },
+  {
+    "economy": "Indonesia",
+    "lawName": "Law of the Republic of Indonesia Number 27 of 2022 on Personal Data Protection",
+    "lawNumber": "UU No. 27 Tahun 2022",
+    "pillar": "Cross-border data policies",
+    "context": "transfer of personal data outside the jurisdiction of the Republic of Indonesia; adequacy of protection",
+    "seedUrl": "https://peraturan.go.id/id/uu-no-27-tahun-2022"
+  },
+  {
+    "economy": "Indonesia",
+    "lawName": "Law of the Republic of Indonesia Number 27 of 2022 on Personal Data Protection",
+    "lawNumber": "UU No. 27 Tahun 2022",
+    "pillar": "Domestic data protection & privacy",
+    "context": "rights of the personal data subject and obligations of the personal data controller",
+    "seedUrl": "https://peraturan.go.id/id/uu-no-27-tahun-2022"
+  },
+  {
+    "economy": "Viet Nam",
+    "lawName": "Decree No. 13/2023/ND-CP on Personal Data Protection",
+    "lawNumber": "13/2023/ND-CP",
+    "pillar": "Cross-border data policies",
+    "context": "cross-border transfer of personal data of Vietnamese citizens; transfer impact assessment dossier",
+    "seedUrl": "https://vanban.chinhphu.vn/?pageid=27160&docid=207759"
+  }
+]

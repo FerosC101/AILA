@@ -1,0 +1,34 @@
+[
+  {
+    "economy": "Indonesia",
+    "lawName": "Law of the Republic of Indonesia Number 27 of 2022 on Personal Data Protection",
+    "lawNumber": "UU No. 27 Tahun 2022",
+    "pillar": "Cross-border data policies",
+    "context": "transfer of personal data outside the jurisdiction of the Republic of Indonesia; adequacy of protection and safeguards",
+    "seedUrl": "https://peraturan.bpk.go.id/Details/229798/uu-no-27-tahun-2022"
+  },
+  {
+    "economy": "Indonesia",
+    "lawName": "Law of the Republic of Indonesia Number 27 of 2022 on Personal Data Protection",
+    "lawNumber": "UU No. 27 Tahun 2022",
+    "pillar": "Domestic data protection & privacy",
+    "context": "rights of personal data subjects and obligations of the personal data controller",
+    "seedUrl": "https://peraturan.bpk.go.id/Details/229798/uu-no-27-tahun-2022"
+  },
+  {
+    "economy": "Viet Nam",
+    "lawName": "Decree No. 13/2023/ND-CP on Personal Data Protection",
+    "lawNumber": "13/2023/ND-CP",
+    "pillar": "Cross-border data policies",
+    "context": "cross-border transfer of personal data of Vietnamese citizens; transfer impact assessment dossier",
+    "seedUrl": "https://vanban.chinhphu.vn/?pageid=27160&docid=207759"
+  },
+  {
+    "economy": "Viet Nam",
+    "lawName": "Decree No. 13/2023/ND-CP on Personal Data Protection",
+    "lawNumber": "13/2023/ND-CP",
+    "pillar": "Domestic data protection & privacy",
+    "context": "obligations of personal data controllers and processors; rights of the data subject",
+    "seedUrl": "https://vanban.chinhphu.vn/?pageid=27160&docid=207759"
+  }
+]
